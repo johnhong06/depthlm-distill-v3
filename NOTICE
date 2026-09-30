@@ -1,0 +1,43 @@
+depthlm-distill-h200
+Copyright (c) 2026 Jihyuck Hong.
+
+The MIT License (see LICENSE) covers ONLY the code written for this repository:
+run.sh, scripts/, experiments/, configs/, depthlm_uncertainty/ (except where a
+file states otherwise). It does NOT cover the files listed below, which are
+provided for noncommercial research use only under the terms of their sources:
+
+  - pools/*/teacher_labels.parquet, and any checkpoint trained from them
+    (outputs / derivative works of the DepthLM model, FAIR Noncommercial
+    Research License, section 1.b.i-ii; a copy of that license is in
+    third_party/DepthLM_Official/MODEL_LICENSE)
+  - ref/*.parquet (sparse pixel coordinates and ground-truth depth values from
+    iBims-1, NYU Depth v2 and ETH3D, under those datasets' research-use terms;
+    ETH3D is CC BY-NC-SA). smoke/data/ images are synthetic.
+  - third_party/ (see item 1)
+
+This repository includes or depends on the following third-party work.
+
+1. DepthLM (Meta Platforms, Inc.)
+   - third_party/DepthLM_Official/utils/ is vendored from
+     https://github.com/facebookresearch/DepthLM and is licensed under
+     CC BY-NC 4.0 (see third_party/DepthLM_Official/LICENSE).
+   - The teacher checkpoint facebook/DepthLM (Pixtral-12B based) is distributed
+     under the FAIR Noncommercial Research License (copy in
+     third_party/DepthLM_Official/MODEL_LICENSE). Its outputs and results,
+     including the pseudo-labels and the student adapters trained on them, may
+     be used for noncommercial research only, and any publication using them
+     must acknowledge DepthLM (section 1.b.iii).
+   - depthlm_uncertainty/inference.py and depthlm_data.py follow the message
+     construction of the official eval.py; to the extent code was copied, that
+     code remains under CC BY-NC 4.0.
+
+2. Qwen2.5-VL-3B-Instruct (Alibaba Cloud), Apache License 2.0. Used as the
+   student model and downloaded from Hugging Face at run time.
+
+3. Datasets. SUN RGB-D, NYU Depth v2, KITTI, iBims-1 and ETH3D images are used
+   under their respective noncommercial research licenses and are NOT
+   redistributed in this repository. Only pixel coordinates, ground-truth depth
+   values at those pixels and teacher pseudo-labels are stored here.
+
+4. Python packages: PyTorch (BSD-3), transformers and peft (Apache-2.0),
+   pandas, pyarrow, numpy, scikit-learn, matplotlib, tabulate (BSD/MIT/PSF).
