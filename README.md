@@ -49,8 +49,11 @@ Every cell is `δ1 / AbsRel` on the pool's own evaluation sets, filled in from e
 finishes; a dash means not evaluated yet. Numbers are taken only from logs of this repository (pre-registration:
 the decision rule of `32_decide.py` is applied per budget row; equal-budget claims must also exceed the B = 400
 replicate spread below). **`soft` and `hard` are both pseudo-label losses (`Loss_pseudo`)** — hard is CE on the
-teacher's answer, soft is KL to the teacher's digit distribution; no cell of the main grid uses ground truth.
-The GT arms (`Loss_gt`, `Loss_gt + Loss_pseudo`) are budget-external and live in their own table below the grids.
+teacher's answer, soft is KL to the teacher's digit distribution; neither uses ground truth.
+**`gt+pseudo` († rows) is `Loss_gt + Loss_pseudo`**, trained alongside soft/hard in the same cells: † marks that it
+uses GT pixels in addition to the same teacher labels — budget-external information, so it is reported in place but
+**excluded from the equal-budget ranking** (C-3b). GT coverage of the pool pixels is extracted beforehand and
+reported per pool (the current label files carry no GT yet; extraction is a prerequisite).
 The `teacher` row is DepthLM 12B evaluated once on the same pixels with the same midpoint decoding;
 `student zero-shot` is the untrained student. Both are baselines, not cells, and carry no loss condition.
 All runs execute on H200; pools are filled in the order indoor → driving → mixed, and the B = 25,600 extension
@@ -62,26 +65,37 @@ rows are **deferred** (kept empty for now).
 |---:|---:|---:|:--|:--|:--|
 | **400** | 400 | 1 | soft | — | — |
 | | | | hard | — | — |
+| | | | gt+pseudo † | — | — |
 | | 100 | 4 | soft | — | — |
 | | | | hard | — | — |
+| | | | gt+pseudo † | — | — |
 | | 25 | 16 | soft | — | — |
 | | | | hard | — | — |
+| | | | gt+pseudo † | — | — |
 | **1,600** | 1600 | 1 | soft | — | — |
 | | | | hard | — | — |
+| | | | gt+pseudo † | — | — |
 | | 400 | 4 | soft | — | — |
 | | | | hard | — | — |
+| | | | gt+pseudo † | — | — |
 | | 100 | 16 | soft | — | — |
 | | | | hard | — | — |
+| | | | gt+pseudo † | — | — |
 | **6,400** | 6400 | 1 | soft | — | — |
 | | | | hard | — | — |
+| | | | gt+pseudo † | — | — |
 | | 1600 | 4 | soft | — | — |
 | | | | hard | — | — |
+| | | | gt+pseudo † | — | — |
 | | 400 | 16 | soft | — | — |
 | | | | hard | — | — |
+| | | | gt+pseudo † | — | — |
 | **25,600** (deferred) | 6400 | 4 | soft | — | — |
 | | | | hard | — | — |
+| | | | gt+pseudo † | — | — |
 | | 1600 | 16 | soft | — | — |
 | | | | hard | — | — |
+| | | | gt+pseudo † | — | — |
 | | | | teacher | — | — |
 | | | | student zero-shot | — | — |
 
@@ -91,26 +105,37 @@ rows are **deferred** (kept empty for now).
 |---:|---:|---:|:--|:--|:--|
 | **400** | 400 | 1 | soft | — | — |
 | | | | hard | — | — |
+| | | | gt+pseudo † | — | — |
 | | 100 | 4 | soft | — | — |
 | | | | hard | — | — |
+| | | | gt+pseudo † | — | — |
 | | 25 | 16 | soft | — | — |
 | | | | hard | — | — |
+| | | | gt+pseudo † | — | — |
 | **1,600** | 1600 | 1 | soft | — | — |
 | | | | hard | — | — |
+| | | | gt+pseudo † | — | — |
 | | 400 | 4 | soft | — | — |
 | | | | hard | — | — |
+| | | | gt+pseudo † | — | — |
 | | 100 | 16 | soft | — | — |
 | | | | hard | — | — |
+| | | | gt+pseudo † | — | — |
 | **6,400** | 6400 | 1 | soft | — | — |
 | | | | hard | — | — |
+| | | | gt+pseudo † | — | — |
 | | 1600 | 4 | soft | — | — |
 | | | | hard | — | — |
+| | | | gt+pseudo † | — | — |
 | | 400 | 16 | soft | — | — |
 | | | | hard | — | — |
+| | | | gt+pseudo † | — | — |
 | **25,600** (deferred) | 6400 | 4 | soft | — | — |
 | | | | hard | — | — |
+| | | | gt+pseudo † | — | — |
 | | 1600 | 16 | soft | — | — |
 | | | | hard | — | — |
+| | | | gt+pseudo † | — | — |
 | | | | teacher | — | — |
 | | | | student zero-shot | — | — |
 
@@ -120,44 +145,39 @@ rows are **deferred** (kept empty for now).
 |---:|---:|---:|:--|:--|:--|:--|:--|
 | **400** | 400 | 1 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
+| | | | gt+pseudo † | — | — | — | — |
 | | 100 | 4 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
+| | | | gt+pseudo † | — | — | — | — |
 | | 25 | 16 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
+| | | | gt+pseudo † | — | — | — | — |
 | **1,600** | 1600 | 1 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
+| | | | gt+pseudo † | — | — | — | — |
 | | 400 | 4 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
+| | | | gt+pseudo † | — | — | — | — |
 | | 100 | 16 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
+| | | | gt+pseudo † | — | — | — | — |
 | **6,400** | 6400 | 1 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
+| | | | gt+pseudo † | — | — | — | — |
 | | 1600 | 4 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
+| | | | gt+pseudo † | — | — | — | — |
 | | 400 | 16 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
+| | | | gt+pseudo † | — | — | — | — |
 | **25,600** (deferred) | 6400 | 4 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
+| | | | gt+pseudo † | — | — | — | — |
 | | 1600 | 16 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
+| | | | gt+pseudo † | — | — | — | — |
 | | | | teacher | — | — | — | — |
 | | | | student zero-shot | — | — | — | — |
-
-### GT arms — budget-external reference (C-3b), never rank-compared with the main grid
-
-GT pixels are extra information outside the teacher-query budget (human annotation, a different currency), so these
-arms answer a separate question — "how much would ground truth add?" — at the grid-optimal cell of each pool once it
-is known. λ (the mixing weight) and the GT source per pool are fixed before running (indoor/mixed: NYUv2 `gt` column
-exists in the labels; driving: GT extraction to be confirmed).
-
-| Pool | Arm | Cell | Set 1 | Set 2 |
-|:--|:--|:--|:--|:--|
-| indoor | gt (CE on GT only) | grid optimum (TBD) | iBims-1 — | NYUv2 — |
-| indoor | gt + pseudo (λ TBD) | grid optimum (TBD) | iBims-1 — | NYUv2 — |
-| driving | gt (CE on GT only) | grid optimum (TBD) | DDAD — | nuScenes — |
-| driving | gt + pseudo (λ TBD) | grid optimum (TBD) | DDAD — | nuScenes — |
-| mixed | gt (CE on GT only) | grid optimum (TBD) | 4 sets — | |
-| mixed | gt + pseudo (λ TBD) | grid optimum (TBD) | 4 sets — | |
 
 ### Noise floor — B = 400 replicate cells (δ1 spread across 4 replicates, per set)
 
@@ -181,33 +201,40 @@ for N = 400). The spread (max − min of δ1 over the 4 replicates) is the floor
 | Experiment | Condition | Cell / subset | Result |
 |:--|:--|:--|:--|
 | W1 pilot (C-3a) | value-space W1 vs soft KL, same cell | to be pre-registered before running | — |
+| GT-only reference (C-3b) | CE on GT alone, no teacher labels | grid optimum cell per pool (TBD) | — |
 | Label decimals (C-3c) | hard, 1 vs 2 decimals, same subset | fixed subset, re-labeled to 2 decimals | — |
 | Recipe-mix (C-4d) | uniform mixed vs per-domain optimal recipes | gate: ≥1 claim in a domain grid | — |
-
-(The GT arms have their own table above.)
 
 ## Order of work
 
 All experiments run on H200 (one job at a time on a whole GPU, as before: GitHub issue → Jenkins → container).
-Pools are filled **indoor → driving → mixed**; the B = 25,600 rows are deferred. To keep each H200 job short,
-a job is one (pool, budget row, loss): six grid jobs per pool plus one baseline job, each ≈ 7–12 h instead of a
-single 20 h+ run. Evaluation economy (pre-registered): main cells (seed 0) are evaluated on the large sets
-(`ref/dist_*`); the extra seeds and the 12 replicate cells only need the spread, so they are evaluated on the small
-pixel sets (`ref/tree_px_*`), which keeps the B = 400 jobs from being dominated by evaluation.
+Pools are filled **indoor → driving → mixed**, and within a pool the cheapest rows go first so the tables fill
+fast; the B = 25,600 rows are deferred. A job is one (pool, budget row, loss) with
+loss ∈ {soft, hard, gt+pseudo}: nine grid jobs per pool plus one baseline job, each well under a day.
 
-0. **Prerequisites (local, before any submission)**: update `31_grid.py` / `32_decide.py` comparison lists to the
-   v3 budget rows; update `run.sh` to `cells_v3.json` / `rows_B*` / `rep_*`; smoke-test one tiny cell locally.
+**Evaluation (pre-registered)**: everything is evaluated on the large sets (`ref/dist_*`) — the small pixel sets
+are not used, since their per-replicate sampling noise (~±0.03 δ1 at ~300 px) is the same size as the allocation
+effects being judged (D-27: ≤ 0.03). The economy comes from *what* is computed, not *where*: main cells (seed 0)
+get the full evaluation including the uncertainty tree (CoV), while extra seeds and the 12 replicate cells get
+**greedy-only** evaluation (single forward per pixel, no tree — ≈ 6× cheaper), which is all a spread estimate needs.
+
+0. **Prerequisites (local, before any submission)**: (a) update `31_grid.py` / `32_decide.py` comparison lists to
+   the v3 budget rows; (b) update `run.sh` to `cells_v3.json` / `rows_B*` / `rep_*`; (c) **extract GT for the pool
+   pixels** (the label files currently carry none — SUN RGB-D/NYUv2/KITTI depth maps are on the local disk) and
+   report coverage per pool; (d) add a greedy-only flag to `21_eval_student.py`; (e) smoke-test one tiny cell.
 1. **Job 0 — baselines (H200, once, ≈ 4–6 h)**: teacher on all four evaluation sets (same pixels, midpoint
-   decoding) + zero-shot student. Fills the two baseline rows of every table first, so every later cell reads
-   against the teacher ceiling.
-2. **Per pool, jobs A–C for each loss (soft first, then hard)**:
-   - **A: B = 400 row (≈ 12 h)** — 3 arms × 3 seeds + 12 replicate cells (training ≈ 1.3 h; the rest is
-     evaluation). Establishes the noise floor before any larger budget is interpreted.
-   - **B: B = 1,600 row (≈ 7 h)** — 3 arms, 1 seed.
-   - **C: B = 6,400 row (≈ 9 h)** — 3 arms, 1 seed.
-   Each cell is evaluated on the pool's own sets inside the same job and the table is filled from the logs.
-3. **Decide per pool** (`32_decide.py`) after its six jobs: apply the pre-registered rule per budget row; claims
-   only where the CI excludes zero on all of the pool's sets and the difference exceeds the noise floor. Then move
-   to the next pool (indoor → driving → mixed).
+   decoding) + zero-shot student. Fills the two baseline rows of every table first.
+2. **Indoor pool, cheapest first — submission order** (then the same pattern for driving, then mixed):
+   - **A1/A2: B = 400, soft / hard (≈ 10–12 h each)** — 3 arms × 3 seeds + 12 replicate cells
+     (training ≈ 1.3 h; main cells full eval, the other 18 checkpoints greedy-only). Fills the first budget row
+     and the noise floor together.
+   - **A3: B = 400, gt+pseudo (≈ 7 h)** — 3 arms × 1 seed, full eval (reference arm, no replicates).
+   - **B1/B2/B3: B = 1,600, soft / hard / gt+pseudo (≈ 7 h each)** — 3 arms, 1 seed.
+   - **C1/C2/C3: B = 6,400, soft / hard / gt+pseudo (≈ 9 h each)** — 3 arms, 1 seed.
+   Each cell is evaluated inside its job and its table row is filled from the log as soon as the zip arrives.
+3. **Decide per pool** (`32_decide.py`) after its jobs: pre-registered rule per budget row (soft/hard only; the
+   † rows are excluded from ranking); claims only where the CI excludes zero on all of the pool's sets and the
+   difference exceeds the noise floor. Then move to the next pool.
 4. **Side experiments** after the main rows they depend on: W1 pilot (needs its cell's KL result), decimals
-   ablation (needs the 2-decimal re-label), GT arms (need the grid optimum), recipe-mix (needs ≥ 1 domain claim).
+   ablation (needs the 2-decimal re-label), GT-only reference (needs the grid optimum), recipe-mix (needs ≥ 1
+   domain claim).
