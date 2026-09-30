@@ -12,7 +12,7 @@ unchanged, prior results are not. Design rationale: [paper/design_v3_corrections
 | Question 1: allocation | With the number of teacher queries fixed at B, is it better to spread B over many distinct images with few pixels each, or few images with many pixels each? |
 | Question 2: training signal | Cross-entropy on the teacher's single answer (`hard`) or KL to the teacher's digit distribution (`soft`)? |
 | Grid | budget B ∈ {400, 1600, 6400} × pixels-per-image k ∈ {1, 4, 16}, N = B/k — 9 nested cells, every budget row is a 3-way equal-budget comparison (larger budgets can be re-added later by the fixed rule: every k with N = B/k ≤ pool size) |
-| Pools | indoor (SUN RGB-D, NYUv2), driving (KITTI), mixed (50/50), 6,400 images each, order v5 (near-duplicates demoted: dHash Hamming ≤ 10 and 32×32 grayscale correlation > 0.9) |
+| Pools | indoor (SUN RGB-D, NYUv2), driving (KITTI), mixed (50/50), 6,400 images each, order v5 (near-duplicates demoted: dHash Hamming ≤ 10 and 32×32 grayscale correlation > 0.9). Every cell with N ≤ 1,600 has only distinct images; at N = 6,400 the demoted near-duplicates come back, so driving has 5,035 and mixed 5,651 distinct images (indoor 6,400) — `tables/cell_stats.md` |
 | Labels | DepthLM 12B answers on the pool pixels; the v3 grid and its replicate cells are fully covered by the existing 44,800 labels per pool — **zero new teacher queries** (verified by `experiments/03_build_cells_v3.py`) |
 | Student input/output | **the teacher's own official DepthLM format**: the official question, then the template `<think> The point is around ` is filled in and the student answers the number (first decimal) followed by ` meters`. The teacher labels and its digit distributions were read in exactly this position, so the student learns the same conditional; image positions use Qwen2.5-VL's 3-D M-RoPE in training and evaluation alike |
 | Ground truth | never used by the pure arms (`soft`, `hard`); the † arms `gt+soft` / `gt+hard` add λ = 0.1 · CE(GT) and are reported beside them but excluded from the equal-budget ranking |
@@ -33,6 +33,8 @@ run.sh                             H200 entry point: MODE=grid|train|eval|baseli
 experiments/03_build_cells_v3.py   (B,k) grid + replicate cells + label-coverage check (run; zero new queries)
 experiments/04_extract_gt.py       GT for the pool pixels (for the † arms only), validated against the teacher labels
 experiments/05_import_legacy.py    maps v2 (N,k) results onto v3 cell names into results/v2_legacy/ — comparison only, never the grid
+experiments/06_cell_stats.py       per-cell distinct images (dedup criterion), scene labels, domain mix → tables/cell_stats.md
+experiments/08_align_pool_coords.py sets pool pixel coordinates to the coordinates the teacher labelled (fixed 41,096 mixed rows)
 experiments/20_train_student.py    LoRA training: soft / hard / gtsoft / gthard (+ gt, wsoft), --seed, --decimals {1,2}
 experiments/21_eval_student.py     per-cell evaluation (full, or --greedy_only for seeds and replicates)
 experiments/31_grid.py, 32_decide.py   per-pool tables and the pre-registered decision rule (--floor = noise floor)
@@ -41,7 +43,7 @@ experiments/34_baselines.py        teacher row (from recorded teacher outputs in
 pools/<pool>/                      pool.jsonl (v5 order), teacher_labels.parquet (+ gt), rows_B*_k*.parquet, rep_*.parquet, cells_v3.json, gt_coverage.md
 tables/                            committed copies of the tables behind the numbers below
 third_party/DepthLM_Official/      official curation/metric utilities (FAIR NC — see LICENSE, NOTICE)
-paper/design_v3_corrections.md     the C-1..C-4 design decisions with evidence (Korean); later amendments in NOTES.md V-1..V-9
+paper/design_v3_corrections.md     the C-1..C-4 design decisions with evidence (Korean); later amendments in NOTES.md V-1..V-11
 ```
 
 ## Status

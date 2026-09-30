@@ -65,6 +65,10 @@ def main():
     if args.rows:     # arm 선택: 행을 제한한 뒤 같은 seed 로 다시 섞어 조건 간 순서 동일
         want = pd.read_parquet(resolve(args.rows))[["image_id", "pixel_index"]].drop_duplicates(); data.rows = data.rows.merge(want, on=["image_id", "pixel_index"]).sample(frac=1.0, random_state=args.seed).reset_index(drop=True)
         data.w = np.ones(len(data.rows)) if args.cond != "wsoft" else (lambda w: w / w.mean())(np.clip(1.0 - data.rows.teacher_cov.values / 0.3, 0.2, 1.0)); print(f"rows {len(data.rows)}", flush=True)
+    # 학습 픽셀(pool.jsonl 좌표) = 라벨 픽셀(교사가 본 좌표)인지 시작 전에 확인 — 다르면 학생이 다른 픽셀의 답을 배운다 (V-10)
+    if "pixel_x_orig" in data.rows:
+        bad = sum(tuple(data.dss[data.idx[r.image_id][0]].records[data.idx[r.image_id][1]]["pixel_coords"][int(r.pixel_index)]) != (int(r.pixel_x_orig), int(r.pixel_y_orig)) for r in data.rows.itertuples())
+        if bad: raise SystemExit(f"!!! 라벨 좌표 ≠ 풀 좌표 {bad}/{len(data.rows)} 행 — experiments/08_align_pool_coords.py 로 맞출 것")
     if args.subset:   # 같은 부분집합·같은 순서에서 라벨 자릿수만 다르게 (D-75)
         sub = pd.read_parquet(resolve(args.subset))[["image_id", "pixel_index", "teacher_full"]]; sub = sub[sub.teacher_full.notna()]
         data.rows = data.rows.merge(sub, on=["image_id", "pixel_index"]).reset_index(drop=True); data.w = np.ones(len(data.rows)); print(f"subset rows {len(data.rows)}", flush=True)
