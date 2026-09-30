@@ -67,7 +67,7 @@ dropped from the grid for now (re-added later by the fixed rule if needed).
 
 | Budget | N | k | Loss | iBims-1 | NYUv2 |
 |---:|---:|---:|:--|:--|:--|
-| **400** | 400 | 1 | soft | — | — |
+| **400** | 400 | 1 | soft | 0.322 / 0.364 | 0.403 / 0.307 |
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
@@ -79,11 +79,11 @@ dropped from the grid for now (re-added later by the fixed rule if needed).
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
-| **1,600** | 1600 | 1 | soft | — | — |
+| **1,600** | 1600 | 1 | soft | 0.461 / 0.297 | 0.539 / 0.252 |
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
-| | 400 | 4 | soft | — | — |
+| | 400 | 4 | soft | 0.467 / 0.293 | 0.564 / 0.246 |
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
@@ -91,15 +91,15 @@ dropped from the grid for now (re-added later by the fixed rule if needed).
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
-| **6,400** | 6400 | 1 | soft | — | — |
+| **6,400** | 6400 | 1 | soft | 0.602 / 0.216 | 0.724 / 0.181 |
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
-| | 1600 | 4 | soft | — | — |
+| | 1600 | 4 | soft | 0.596 / 0.218 | 0.730 / 0.180 |
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
-| | 400 | 16 | soft | — | — |
+| | 400 | 16 | soft | 0.600 / 0.217 | 0.703 / 0.189 |
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
@@ -237,13 +237,19 @@ get the full evaluation including the uncertainty tree (CoV), while extra seeds 
    report coverage per pool; (d) add a greedy-only flag to `21_eval_student.py`; (e) smoke-test one tiny cell.
 1. **Job 0 — baselines (H200, once, ≈ 4–6 h)**: teacher on all four evaluation sets (same pixels, midpoint
    decoding) + zero-shot student. Fills the two baseline rows of every table first.
-2. **Indoor pool, cheapest first — submission order** (then the same pattern for driving, then mixed):
+2. **Indoor pool, cheapest first — submission order** (then the same pattern for driving, then mixed).
+   The v2 grids already trained on H200 map cell-for-cell onto v3 (nested design: identical rows, labels, seed —
+   `05_import_legacy.py`), so indoor **soft seed-0 results for 6 of 9 cells are already imported**, and the
+   running indoor-hard job will supply the same 6 for hard. Only the gaps are submitted:
    - **A1/A2: B = 400, soft / hard (≈ 10–12 h each)** — 3 arms × 3 seeds + 12 replicate cells
-     (training ≈ 1.3 h; main cells full eval, the other 18 checkpoints greedy-only). Fills the first budget row
-     and the noise floor together.
-   - **A3/A4: B = 400, gt+soft / gt+hard (≈ 7 h each)** — 3 arms × 1 seed, full eval (reference arms, no replicates).
-   - **B1–B4: B = 1,600, soft / hard / gt+soft / gt+hard (≈ 7 h each)** — 3 arms, 1 seed.
-   - **C1–C4: B = 6,400, soft / hard / gt+soft / gt+hard (≈ 9 h each)** — 3 arms, 1 seed.
+     (training ≈ 1.3 h; main cells full eval, the other 18 checkpoints greedy-only). B400_k1 seed 0 repeats the
+     imported cell (~2 h redundancy, kept for job simplicity — also a free reproducibility check).
+   - **B1': B = 1,600, soft — missing cell only** (`CELLS="B1600_k16"`, ≈ 3 h); **B2'** likewise for hard after
+     its zip arrives. B1600_k1/k4 and the whole B=6,400 row come from the import.
+   - **A3/A4, B3/B4, C3/C4: gt+soft / gt+hard** — no legacy exists for the † arms, so these run in full
+     (3 arms × 1 seed per budget row, ≈ 7–9 h each).
+   For driving and mixed there is no (or only partial local) legacy; driving runs the full pattern, and the local
+   mixed v5 results can be imported the same way when that pool starts.
    Each cell is evaluated inside its job and its table row is filled from the log as soon as the zip arrives.
 3. **Decide per pool** (`32_decide.py`) after its jobs: pre-registered rule per budget row (soft/hard only; the
    † rows are excluded from ranking); claims only where the CI excludes zero on all of the pool's sets and the
