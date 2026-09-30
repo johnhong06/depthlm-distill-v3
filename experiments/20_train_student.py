@@ -82,6 +82,7 @@ def main():
     total = int(len(data.rows) * args.epochs) if not args.steps else args.steps; opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr, weight_decay=0.0)
     sch = get_cosine_schedule_with_warmup(opt, num_warmup_steps=max(1, min(100, total // args.accum // 20)), num_training_steps=max(1, total // args.accum))
     out_dir = os.path.join(os.path.expanduser(args.out), args.cond + args.tag); os.makedirs(out_dir, exist_ok=True); log = open(os.path.join(out_dir, "train.log"), "a")
+    if os.path.exists(os.path.join(out_dir, "DONE")): os.remove(os.path.join(out_dir, "DONE"))   # 다시 학습하면 끝날 때까지 미완으로 둔다
     t0 = time.time(); model.train(); run = 0.0; nrun = 0
     for step in range(total):
         r = data.rows.iloc[step % len(data.rows)]; im = data.image(r)
@@ -115,8 +116,9 @@ def main():
             torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], 1.0); opt.step(); sch.step(); opt.zero_grad()
         if (step + 1) % 200 == 0 or step + 1 == total:
             msg = f"step {step+1}/{total} loss {run/max(nrun,1):.4f} lr {sch.get_last_lr()[0]:.2e} {(time.time()-t0)/(step+1):.3f}s/step"; print(msg, flush=True); log.write(msg + "\n"); log.flush(); run = 0.0; nrun = 0
-        if (step + 1) % 5000 == 0: model.save_pretrained(out_dir)
-    model.save_pretrained(out_dir); print(f"저장 → {out_dir}  총 {time.time()-t0:.0f}s", flush=True)   # lora_adapter.pt 중복 저장 제거: 아무도 읽지 않으면서 셀당 29 MB 를 두 번 썼다
+    model.save_pretrained(out_dir)   # 중간 저장은 하지 않는다 — 재개 기능이 없어 덜 학습된 어댑터만 남긴다 (V-12)
+    json.dump({"cond": args.cond, "seed": args.seed, "steps": total, "rows": int(len(data.rows)), "rows_file": args.rows}, open(os.path.join(out_dir, "DONE"), "w"))   # 끝까지 학습했다는 표시 — run.sh 는 이것만 믿는다
+    print(f"저장 → {out_dir}  총 {time.time()-t0:.0f}s", flush=True)
 
 if __name__ == "__main__":
     main()

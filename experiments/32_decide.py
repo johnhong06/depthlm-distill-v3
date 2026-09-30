@@ -28,8 +28,8 @@ def load(root, cond, tag, ds):   # 예전 한 파일과 데이터셋별 파일 �
     b = os.path.join(os.path.expanduser(root), "eval", f"eval_{cond}_{tag}_large")
     fs = [f for f in (f"{b}__{ds}.parquet", f"{b}.parquet") if os.path.exists(f)]
     if not fs: return None
-    d = pd.concat([pd.read_parquet(f) for f in fs]).drop_duplicates(["dataset", "image_id", "pixel_index"]); d = d[(d.dataset == ds) & d.pred.notna() & (d.pred > 0)].copy()
-    d["pm"] = d["pred_mid"] if "pred_mid" in d else d["pred"] + 0.05; return d if len(d) else None
+    d = pd.concat([pd.read_parquet(f) for f in fs]).drop_duplicates(["dataset", "image_id", "pixel_index"]); d = d[d.dataset == ds].copy()
+    d["pm"] = (d["pred_mid"] if "pred_mid" in d else d["pred"] + 0.05).fillna(0.05); return d if len(d) else None   # 모든 픽셀: 파싱 실패·"0.0" = 0.05 m 답 (V-12)
 
 def ddad_body_pixels(data_root):   # 전면이 아닌 카메라의 아래쪽 1/4 = 차체가 찍힐 수 있는 영역
     p = os.path.join(os.path.expanduser(data_root), "eval", "ddad", "ddad_val.jsonl")

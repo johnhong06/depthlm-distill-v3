@@ -13,8 +13,8 @@ import numpy as np, pandas as pd
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NAMES = {"ibims1": "iBims-1", "nyuv2": "NYUv2", "ddad": "DDAD", "nuscenes": "nuScenes"}
 
-def score(p, g):
-    p, g = np.asarray(p, float), np.asarray(g, float); ok = np.isfinite(p) & (p > 0) & (g > 0); p, g = p[ok], g[ok]
+def score(p, g):   # 모든 픽셀: 파싱 실패는 0.05 m 답 = 오답 (학생 채점과 같은 규칙, V-12)
+    p, g = np.nan_to_num(np.asarray(p, float), nan=0.05), np.asarray(g, float); ok = g > 0; p, g = p[ok], g[ok]
     return float((np.maximum(p / g, g / p) < 1.25).mean()), float(np.mean(np.abs(p - g) / g)), int(ok.sum())
 
 def main():

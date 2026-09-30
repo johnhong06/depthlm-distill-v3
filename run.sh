@@ -379,9 +379,9 @@ case $COND in gthard|gtsoft)   # † arm: GT 가 없는 라벨이면 조용히 �
 esac
 fi
 train_cell() { local rows tag seed greedy; IFS=';' read -r rows tag seed greedy <<< "$1"; local ad=$OUT_ROOT/checkpoints/${COND}_${tag}${SUFFIX}
-  [ -f "$ad/adapter_model.safetensors" ] && { say "$tag 학습 완료됨 — 건너뜀"; return 0; }
+  [ -f "$ad/DONE" ] && { say "$tag 학습 완료됨 — 건너뜀"; return 0; }
   say "학습 $COND $tag (시드 $seed)"; python -u experiments/20_train_student.py --cond "$COND" --epochs 2 --accum 8 --focal "$FOCAL" --seed "$seed" --labels "$LABELS" --pools "$PCFG" --rows "pools/$POOL/$rows" --tag "_${tag}${SUFFIX}" > "$OUT_ROOT/train_${COND}_${tag}${SUFFIX}.log" 2>&1 || say "!!! 학습 실패 $tag"; }
-eval_cell() { local rows tag seed greedy; IFS=';' read -r rows tag seed greedy <<< "$1"; local ad=$OUT_ROOT/checkpoints/${COND}_${tag}${SUFFIX}; [ -f "$ad/adapter_model.safetensors" ] || return 0; [ -n "$EVAL_DATASETS" ] || return 0
+eval_cell() { local rows tag seed greedy; IFS=';' read -r rows tag seed greedy <<< "$1"; local ad=$OUT_ROOT/checkpoints/${COND}_${tag}${SUFFIX}; [ -f "$ad/DONE" ] || { [ -f "$ad/adapter_model.safetensors" ] && say "!!! $tag 어댑터는 있지만 DONE 이 없다 — 학습이 끝나지 않은 것, 평가하지 않음"; return 0; }; [ -n "$EVAL_DATASETS" ] || return 0
   local gflag=""; [ "$greedy" = 1 ] && gflag="--greedy_only"   # 시드>0·반복 셀: 산포 추정용 greedy 전용 (V-3)
   for es in $EVAL_SETS; do [ "$es" = none ] && continue; local suf="" todo="" ds; [ "$es" = large ] && suf=_large
     local base=$OUT_ROOT/eval/eval_${COND}_${tag}${SUFFIX}${suf}   # 데이터셋별 파일 <base>__<ds>.parquet, 예전 한 파일 <base>.parquet 는 ibims1·nyuv2·eth3d 를 담는다
@@ -436,14 +436,14 @@ if [ "$MODE" != train ]; then   # 이 환경에 없는 평가 세트는 건너�
 case $MODE in
   train) run_cells train_cell
          say "[train] 완료 $POOL $COND — 단위별 어댑터:"
-         NOK=0; for u in $UNITS; do t=$(echo "$u" | cut -d';' -f2); if [ -f "$OUT_ROOT/checkpoints/${COND}_${t}${SUFFIX}/adapter_model.safetensors" ]; then NOK=$((NOK+1)); say "  $t  OK"; else say "  $t  !!! 실패 → $OUT_ROOT/train_${COND}_${t}${SUFFIX}.log 확인"; fi; done
+         NOK=0; for u in $UNITS; do t=$(echo "$u" | cut -d';' -f2); if [ -f "$OUT_ROOT/checkpoints/${COND}_${t}${SUFFIX}/DONE" ]; then NOK=$((NOK+1)); say "  $t  OK"; else say "  $t  !!! 실패 → $OUT_ROOT/train_${COND}_${t}${SUFFIX}.log 확인"; fi; done
          say "[train] $NOK/$NCELL 단위 성공. 어댑터: $OUT_ROOT/checkpoints/${COND}_*${SUFFIX}"
          say "[train] 다음 단계는 bash run.sh eval $POOL $COND — 단, 어댑터가 $OUT_ROOT 에 남아 있어야 한다"
          say "[train] 결과 볼륨이 작업 사이에 비워지는 환경(사업단 H200, 2026-09-28 실측)이면 eval 이 어댑터를 못 찾는다. 그 경우 학습과 평가를 한 작업으로 도는 bash run.sh grid $POOL $COND 를 쓸 것"
          [ "$NOK" -gt 0 ] || exit 1
          exit 0;;
-  eval)  NAD=0; for u in $UNITS; do t=$(echo "$u" | cut -d';' -f2); [ -f "$OUT_ROOT/checkpoints/${COND}_${t}${SUFFIX}/adapter_model.safetensors" ] && NAD=$((NAD+1)) || true; done
-         [ "$NAD" -gt 0 ] || { say "!!! [eval] $OUT_ROOT/checkpoints 에 ${COND}_*${SUFFIX} 어댑터가 없다"
+  eval)  NAD=0; for u in $UNITS; do t=$(echo "$u" | cut -d';' -f2); [ -f "$OUT_ROOT/checkpoints/${COND}_${t}${SUFFIX}/DONE" ] && NAD=$((NAD+1)) || true; done
+         [ "$NAD" -gt 0 ] || { say "!!! [eval] $OUT_ROOT/checkpoints 에 끝까지 학습된(DONE 표시가 있는) ${COND}_*${SUFFIX} 어댑터가 없다"
            say "!!! → 같은 파드에서 학습했다면 bash run.sh train $POOL $COND 먼저"
            say "!!! → 결과 볼륨이 작업 사이에 비워지는 환경이면 학습 결과가 넘어오지 않는다. bash run.sh grid $POOL $COND 로 학습과 평가를 한 작업에 돌릴 것"; exit 1; }
          say "[eval] 학습된 어댑터 $NAD/$NCELL 단위"; run_cells eval_cell;;
@@ -460,14 +460,14 @@ fi
 say "[$MODE] 완료 $POOL $COND. 결과: $OUT_ROOT/{eval,tables,figures,checkpoints}"
 [ "$MODE" = baseline ] || for es in $EVAL_SETS; do [ "$es" = none ] || [ -z "$EVAL_DATASETS" ] && continue; suf=""; [ "$es" = large ] && suf=_large; echo "===== 요약 $POOL $COND ($es) ====="; head -40 "$OUT_ROOT/tables/table_grid_${COND}${SUFFIX}${suf}.md" 2>/dev/null || echo "  (표 파일 없음: tables/table_grid_${COND}${SUFFIX}${suf}.md — 31_grid.py 로그 확인)"; done
 ZSUF=$SUFFIX; [ "$MODE" = baseline ] && ZSUF=""   # 베이스라인 파일(eval_zeroshot_f750_*, tables/zeroshot_*)에는 풀 접미사가 없다
-python - "$OUT_ROOT" "results_${COND}_${POOL}" "${COND}_" "$ZSUF" <<'PYS' || say "!!! zip 생성 실패 — 결과 파일은 $OUT_ROOT 에 그대로 있다 (여유 공간 확인)"
-import sys, os, re, zipfile; root, name, cond, suffix = sys.argv[1:5]
+python - "$OUT_ROOT" "results_${COND}_${POOL}" "${COND}_" "$ZSUF" "$(basename "$LOG")" <<'PYS' || say "!!! zip 생성 실패 — 결과 파일은 $OUT_ROOT 에 그대로 있다 (여유 공간 확인)"
+import sys, os, re, zipfile; root, name, cond, suffix, runlog = sys.argv[1:6]   # runlog = 이 작업의 실행 로그만 (다른 조건의 run_*.log 는 넣지 않는다)
 with zipfile.ZipFile(f"{root}/{name}.zip", "w", zipfile.ZIP_DEFLATED) as z:
     for dp, dn, fn in os.walk(root):
         dn[:] = [d for d in dn if d not in ("hf", "data", "labels")]
         for f in fn:
             rel = os.path.relpath(os.path.join(dp, f), root)
             if f.endswith(".zip"): continue   # 쓰는 중인 zip 자신·다른 결과 zip 제외
-            if (re.search(r"(^|[/_])" + re.escape(cond), rel) and suffix in rel) or rel.startswith("run_"): z.write(os.path.join(dp, f), rel)   # "soft_" 가 "gtsoft_" 에 걸리지 않게 앞 경계 확인
+            if (re.search(r"(^|[/_])" + re.escape(cond), rel) and suffix in rel) or rel == runlog: z.write(os.path.join(dp, f), rel)   # "soft_" 가 "gtsoft_" 에 걸리지 않게 앞 경계 확인
 print(f"zip: {root}/{name}.zip  {os.path.getsize(f'{root}/{name}.zip')/1e6:.1f} MB")
 PYS

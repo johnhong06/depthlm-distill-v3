@@ -1,6 +1,9 @@
 """풀 픽셀 GT 추출 (V-3) — gt+hard·gt+soft arm 의 L_gt 용. 라벨 parquet 의 gt 열을 제자리에서 채운다.
 GT 는 절대 규칙 1 에 따라 본 격자 학습에 쓰지 않는다: † arm 과 채점·점검 전용.
-소스별 GT 출처·규약:
+GT = 카메라 중심까지의 **유클리드 거리** √(X²+Y²+Z²) (V-12) — DepthLM 공식 curate(curate_sunRGBD.py·curate_NYU.py 의
+euclidean_distances)와 우리 평가 세트의 depth 와 같은 정의. 깊이맵은 z 이므로 풀의 intrinsics 로 X=(u−cx)z/fx, Y=(v−cy)z/fy 를 만든다.
+(kitti_dsel 은 크롭이라 주점을 W/2, H/2 로 근사 — 01_count_scenes 의 근사 intrinsics 와 같다.)
+소스별 깊이맵(z) 출처·규약:
   sunrgbd_*  : 같은 캡처 폴더의 depth/*.png, SUN RGB-D 툴박스 규약 bitshift(v,-3)|bitshift(v,13) 후 /1000 m, 유효 0.005–25.
                공식 curate_sunRGBD.py 의 /10000 은 툴박스와 1.25배 어긋나며, 추출 검증에서 교사 log(t/g)+0.20 편향으로
                드러나 툴박스 규약을 채택 (NYUv2 는 편향 −0.03 으로 정상 — V-5 검증 기록)
@@ -52,6 +55,7 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--pool", required=True); ap.add_argument("--data", default=os.path.expanduser("~/data")); ap.add_argument("--dry", action="store_true")
     a = ap.parse_args(); P = os.path.join(ROOT, "pools", a.pool); a.data = os.path.expanduser(a.data)
     lab = pd.read_parquet(f"{P}/teacher_labels.parquet")
+    INTR = {r["image"]: r["intrinsics"] for r in map(json.loads, open(f"{P}/pool.jsonl"))}   # [fx, fy, cx, cy, W, H] 원본 해상도
     global NYU
     NYU = None
     if (lab.source == "nyuv2").any():
@@ -66,7 +70,8 @@ def main():
         H, W = dm.shape
         x = g["pixel_x_orig"].to_numpy(float).round().astype(int).clip(0, W - 1)
         y = g["pixel_y_orig"].to_numpy(float).round().astype(int).clip(0, H - 1)
-        gt[g.index] = dm[y, x]
+        z = dm[y, x].astype(np.float64); fx, fy, cx, cy = INTR[img][:4]
+        gt[g.index] = np.where(z > 0, np.sqrt(((x - cx) * z / fx) ** 2 + ((y - cy) * z / fy) ** 2 + z ** 2), 0.0)   # z → 유클리드 거리
     lab["gt"] = gt
     cov = lab.assign(has=lab["gt"] > 0).groupby("source")["has"].agg(["sum", "count"])
     cov["pct"] = (100 * cov["sum"] / cov["count"]).round(1)

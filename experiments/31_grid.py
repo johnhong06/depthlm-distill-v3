@@ -23,7 +23,7 @@ def load(tag):   # 예전 한 파일(eval_<tag>[_large].parquet)과 데이터셋
     ps = [q for q in [f"{b}.parquet"] + [f"{b}__{n}.parquet" for n in NAMES] if os.path.exists(q)]
     if not ps: return None
     d = pd.concat([pd.read_parquet(q) for q in ps], ignore_index=True).drop_duplicates(["dataset", "image_id", "pixel_index"]); d = d[d.dataset.isin(list(NAMES))]
-    d = d[d.pred.notna() & (d.pred > 0)].copy(); d["pm"] = d["pred_mid"] if "pred_mid" in d else d["pred"] + 0.05; return d
+    d = d.copy(); d["pm"] = (d["pred_mid"] if "pred_mid" in d else d["pred"] + 0.05).fillna(0.05); return d   # 모든 픽셀: 파싱 실패·"0.0" = 0.05 m 답 (V-12)
 D = {c["tag"]: load(c["tag"]) for c in cells}; have = [c for c in cells if D[c["tag"]] is not None]
 if not have: print("평가 결과 없음"); raise SystemExit
 rows = []

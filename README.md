@@ -43,7 +43,7 @@ experiments/34_baselines.py        teacher row (from recorded teacher outputs in
 pools/<pool>/                      pool.jsonl (v5 order), teacher_labels.parquet (+ gt), rows_B*_k*.parquet, rep_*.parquet, cells_v3.json, gt_coverage.md
 tables/                            committed copies of the tables behind the numbers below
 third_party/DepthLM_Official/      official curation/metric utilities (FAIR NC — see LICENSE, NOTICE)
-paper/design_v3_corrections.md     the C-1..C-4 design decisions with evidence (Korean); later amendments in NOTES.md V-1..V-11
+paper/design_v3_corrections.md     the C-1..C-4 design decisions with evidence (Korean); later amendments in NOTES.md V-1..V-12
 ```
 
 ## Status
@@ -67,13 +67,13 @@ keeps its two forms: `gt+hard` = (1−λ)·CE(teacher answer) + λ·CE(GT), `gt+
 on the true-label term [arXiv:1503.02531]; the paper gives no universal value, so the common instantiation 0.1 is
 pre-registered, and the weighted average keeps the effective learning rate comparable to the pure arms. † marks
 budget-external information (GT pixels on top of the same teacher labels): reported in place, but **excluded from
-the equal-budget ranking** (C-3b). GT labels use the same first-decimal truncation as the teacher labels. GT covers
+the equal-budget ranking** (C-3b). GT is the Euclidean distance to the camera, as in the official DepthLM curation and our evaluation sets (the depth maps give z; the pool intrinsics convert it), truncated to the first decimal like the teacher labels. GT covers
 84 % of the indoor rows, 45 % of mixed and **only 4.3 % of driving** (raw KITTI frames have no GT;
 `pools/<pool>/gt_coverage.md`), so the driving † arms differ from the pure arms on few rows.
 The `teacher` row is DepthLM 12B on the same pixels with the same midpoint decoding, computed from its recorded
 outputs in `ref/` (`34_baselines.py`); like the students it is scored against Euclidean distance to the camera.
 With z-depth, the paper's convention, the teacher gets DDAD 0.676 and nuScenes 0.802 (paper: 0.819).
-`student zero-shot` is the untrained student. Both are baselines, not cells, and carry no loss condition.
+`student zero-shot` is the untrained student. Both are baselines, not cells, and carry no loss condition. **Every evaluation pixel is scored** — an unparsable or `0.0` answer counts as the answer 0.05 m (a miss) — for students, teacher and zero-shot alike. Scene clusters for DDAD and nuScenes come from `ref/scenes_*.parquet` (built from the evaluation pack sent to H200), never from the local disk, and an unknown image stops the analysis.
 All runs execute on H200; pools are filled in the order indoor → driving → mixed. The B = 25,600 extension is
 dropped from the grid for now (re-added later by the fixed rule if needed).
 
@@ -286,7 +286,7 @@ step on indoor because 84 % of the rows carry a second, GT forward pass):
 | 11–12 | as 9–10 with `CELLS=B1600_k1,B1600_k4,B1600_k16` | † rows, B = 1,600 | 3–5 h |
 | 13–14 | as 9–10 with `CELLS=B6400_k1,B6400_k4,B6400_k16` | † rows, B = 6,400 | 6–9 h |
 
-After each zip: fill its rows. After the indoor jobs: `33_noise_floor.py --pool indoor`, then
+A cell counts as trained only if its adapter folder has `DONE`, written after the last step; a job that dies mid-training leaves no `DONE`, and that cell is neither evaluated nor counted. After each zip: fill its rows. After the indoor jobs: `33_noise_floor.py --pool indoor`, then
 `32_decide.py --pool indoor --floor results/tables/noise_floor_indoor.json` gives the indoor verdict.
 
 **Then driving (`outdoor`), then mixed**, the same fourteen-job pattern (after the one-time smoke and baseline).

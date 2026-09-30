@@ -24,8 +24,8 @@ def load(root, cond, tag, pool, focal):   # 한 파일(_large.parquet) 또는 �
 
 def d1_by_set(d):
     out = {}
-    for ds, g in d[d.pred.notna() & (d.pred > 0)].groupby("dataset"):
-        p = (g["pred_mid"] if "pred_mid" in g else g["pred"] + 0.05).to_numpy(float); t = g["gt"].to_numpy(float)
+    for ds, g in d.groupby("dataset"):   # 모든 픽셀: 파싱 실패·"0.0" = 0.05 m 답 (V-12)
+        p = (g["pred_mid"] if "pred_mid" in g else g["pred"] + 0.05).fillna(0.05).to_numpy(float); t = g["gt"].to_numpy(float)
         out[ds] = (float((np.maximum(p / t, t / p) < 1.25).mean()), len(g))
     return out
 

@@ -71,7 +71,7 @@ def main():
             if "mm_token_type_ids" in inputs: inputs["mm_token_type_ids"] = torch.cat([inputs["mm_token_type_ids"], torch.zeros_like(TM)[None]], 1)
             is_cuda and torch.cuda.synchronize(); t1 = time.time(); val = decode(model, tok, inputs); is_cuda and torch.cuda.synchronize(); t_dec = time.time() - t1
             nd = None if args.greedy_only else enumerate_number_distribution(model, tok, inputs, torch.tensor([], dtype=torch.long), min_branch_p=0.005, chunk=chunk, stop_first_decimal=(args.decimals == 1), max_depth=6)
-            rows.append({"dataset": name, "image_id": s.image_id, "pixel_index": j, "gt": s.depth_gt, "pred": val, "pred_mid": (val + 0.5 * 10 ** (-args.decimals)) if val == val else val,
+            rows.append({"dataset": name, "image_id": s.image_id, "pixel_index": j, "gt": s.depth_gt, "pred": val, "pred_mid": (np.floor(val * 10 ** args.decimals + 1e-4) / 10 ** args.decimals + 0.5 * 10 ** (-args.decimals)) if val == val else val,   # 절사 후 중간값 (교사 행과 같은 규약, V-12)
                          "cov": np.nan if nd is None else nd.stats()["dist_cov"], "ev": np.nan if nd is None else nd.expected_value(), "mass": np.nan if nd is None else nd.covered_mass, "sec_decode": t_dec}); n += 1; del inputs
         print(f"{name}: {n} px, {(time.time()-t0)/max(n,1):.2f} s/px", flush=True)
         if not legacy_out: pd.DataFrame(rows[n0:]).to_parquet(per, index=False)   # 데이터셋이 끝날 때마다 저장 (중간에 끊겨도 끝난 세트는 남는다)
@@ -79,12 +79,14 @@ def main():
     if legacy_out: d.to_parquet(f"{base}.parquet", index=False)
     if not len(d): print("평가한 픽셀 없음", flush=True); return
     for name, g in d.groupby("dataset"):
-        ok = g[g.pred.notna() & (g.pred > 0)]; gt = ok["gt"].values; p = ok.pred_mid.values; err = np.abs(p - gt) / gt; fail = (np.maximum(p / gt, gt / p) >= 1.25).astype(int)
-        if ok["cov"].notna().any():
-            a = compute_aucs(gt, p, ok["cov"].values, metrics=("abs_rel",))["abs_rel"]["ause"]; auc = roc_auc_score(fail, ok["cov"].values) if fail.min() != fail.max() else np.nan
+        gt = g["gt"].values; p = g.pred_mid.fillna(0.05).values; err = np.abs(p - gt) / gt; fail = (np.maximum(p / gt, gt / p) >= 1.25).astype(int)   # 모든 픽셀 채점: 파싱 실패·"0.0" 은 0.05 m 답 = 오답 (V-12)
+        q = g[g.pred.notna() & g["cov"].notna()]   # 불확실도 진단은 답과 분포가 있는 픽셀에서만
+        if len(q):
+            qp, qg = q.pred_mid.values, q["gt"].values; qf = (np.maximum(qp / qg, qg / qp) >= 1.25).astype(int)
+            a = compute_aucs(qg, qp, q["cov"].values, metrics=("abs_rel",))["abs_rel"]["ause"]; auc = roc_auc_score(qf, q["cov"].values) if qf.min() != qf.max() else np.nan
             uq = f"| CoV AUSE {a:.4f} AUC {auc:.3f} "
         else: uq = "| greedy-only "
-        print(f"[{args.tag}] {name}: n={len(ok)} 파싱 {len(ok)/len(g)*100:.1f}%  δ₁ {np.mean(fail == 0):.3f}  AbsRel {err.mean():.3f}  {uq}| decode {ok.sec_decode.mean():.3f} s/px  VRAM {(torch.cuda.max_memory_allocated()/1e9 if is_cuda else 0):.1f} GB", flush=True)
+        print(f"[{args.tag}] {name}: n={len(g)} 파싱 {100 * g.pred.notna().mean():.1f}%  '0.0' {100 * (g.pred == 0).mean():.1f}%  δ₁ {np.mean(fail == 0):.3f}  AbsRel {err.mean():.3f}  {uq}| decode {g.sec_decode.mean():.3f} s/px  VRAM {(torch.cuda.max_memory_allocated()/1e9 if is_cuda else 0):.1f} GB", flush=True)
 
 if __name__ == "__main__":
     main()
