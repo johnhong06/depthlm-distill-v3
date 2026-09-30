@@ -10,7 +10,8 @@
 #   MODE=grid  POOL=indoor COND=soft bash run.sh        # ②+③ 을 한 작업에 (권장: 예산 행 하나씩 — 예 CELLS="B400_k1 B400_k4 B400_k16")
 # v3 격자 (paper/design_v3_corrections.md C-2): 셀 = cells_v3.json 의 (B,k) 9개, COND ∈ soft|hard|gthard|gtsoft (†arm 은 λ=0.1 GT 합산)
 # 환경변수: DATA_ROOT(데이터 루트, 기본 ./data), OUT_ROOT(결과, 기본 ./results), FOCAL(750), CELLS(기본 cells_v3.json 전체 — 예산 행 하나만: "B400_k1 B400_k4 B400_k16"),
-#           SEEDS(기본 "0", B=400 행은 "0 1 2" 권장 — 시드>0 은 태그 _s<seed>, greedy 전용 평가), REPLICATES(1 = B400 반복 셀 12개도 학습·greedy 평가 — soft/hard 만),
+#           SEEDS(기본 "0", B=400 행은 "0 1 2" 권장 — 시드>0 은 태그 _s<seed>, greedy 전용 평가), REPLICATES(1 = B400 반복 셀 9개(b0·p0 제외 — 본 셀과 동일)도 학습·greedy 평가 — soft/hard 만),
+#           SKIP(제외할 단위 태그, 예 "B400_k1" — 옛 격자에서 들여온 본 셀), MODE=baseline(zero-shot 학생 greedy 평가 + 교사 행, 조건 없음),
 #           EVAL_SETS(기본 large, none = 평가 안 함), EVAL_DATASETS(기본 풀별), HF_TOKEN(gated 모델용), NPROC(병렬 학습 프로세스 수)
 set -euo pipefail; cd "$(dirname "$0")"; export PYTHONUNBUFFERED=1
 # 규칙: /app/output 은 결과 전용이다. 압축 해제본·모델 캐시·임시 파일은 절대 여기에 두지 않는다 (2026-09-27 output 100 GB 초과로 실험이 강제 종료된 원인)
@@ -28,9 +29,13 @@ cleanup() { if [ "${CLEAN_WORK:-0}" = 1 ] && [ "${H200_CHILD:-0}" = 0 ] && [ "$E
 trap cleanup EXIT
 # 위치 인자: bash run.sh <smoke|label|grid|all> [pool] [cond] [hf_token]   (환경변수 MODE/POOL/COND/HF_TOKEN 도 동일하게 동작; 토큰은 /app/data/hf_token.txt 로도 가능)
 # all = 혼합 격자 2개 → 실내·실외 라벨링(라벨이 없을 때만) → 실내·실외 격자 4개를 한 작업으로 이어서 실행
-ARGS=(); for a in "$@"; do case $a in hf_*) export HF_TOKEN=$a;; *) ARGS+=("$a");; esac; done   # hf_ 로 시작하는 인자는 위치와 무관하게 토큰
+ARGS=(); for a in "$@"; do case $a in hf_*) export HF_TOKEN=$a;;   # hf_ 로 시작하는 인자는 위치와 무관하게 토큰
+  CELLS=*|SEEDS=*|REPLICATES=*|SKIP=*|EVAL_DATASETS=*|EVAL_SETS=*|EVAL_EXTRA=*|FOCAL=*|NPROC=*) export "${a%%=*}=${a#*=}";;   # 이슈 한 줄 명령용: KEY=값 인자 (목록은 쉼표로)
+  *) ARGS+=("$a");; esac; done
+for v in CELLS SEEDS SKIP EVAL_DATASETS EVAL_SETS; do [ -n "${!v:-}" ] && export "$v=${!v//,/ }"; done   # 쉼표 목록 → 공백 목록 (공백을 쓰는 환경변수 방식도 그대로 동작)
 MODE=${ARGS[0]:-${MODE:-smoke}}; POOL=${ARGS[1]:-${POOL:-mixed}}; COND=${ARGS[2]:-${COND:-soft}}
-case $MODE in check|data|smoke|label|train|eval|grid|all) ;; *) echo "!!! 알 수 없는 MODE=$MODE — check|data|smoke|label|train|eval|grid|all 중 하나"; exit 1;; esac
+case $MODE in check|data|smoke|label|train|eval|grid|all|baseline) ;; *) echo "!!! 알 수 없는 MODE=$MODE — check|data|smoke|label|train|eval|grid|all|baseline 중 하나"; exit 1;; esac
+[ "$MODE" = baseline ] && COND=zeroshot   # 베이스라인은 손실 조건이 없다 — 로그·zip 이름용
 FOCAL=${FOCAL:-750}; EVAL_SETS=${EVAL_SETS:-large}; export HF_HUB_DISABLE_PROGRESS_BARS=1   # small ⊂ large 이고 복호가 결정적이라 small 은 large 에서 골라낸다 (NOTES D-17)
 # 사업단 파드 규격: 데이터는 /app/data, 결과는 /app/output (파드 종료 후 보존). 없으면 로컬 기본값.
 export DATA_ROOT=${DATA_ROOT:-$([ -d /app/data/depthlm_distill_h200 ] && echo /app/data/depthlm_distill_h200 || { [ -d /app/data ] && echo /app/data || echo $PWD/data; })}   # 관리자가 tar 를 푼 폴더 우선
@@ -47,7 +52,7 @@ mkdir -p "$WORK_ROOT"; XROOT=$WORK_ROOT/h200_extracted   # 제자리 해제가 �
 case $WORK_ROOT in /app/data*|/app/scratch*) WORK_PERSISTENT=1;; *) WORK_PERSISTENT=0;; esac
 # 단계마다 실제로 읽는 것만 푼다 (임시 디스크로 풀 때만 적용. /app/data 제자리 해제는 한 번에 전부 풀어 두고 모든 단계가 재사용한다)
 #   label 교사 추론 = 풀 이미지 + 교사 가중치 | train 학생 학습 = 풀 이미지만 (교사 가중치 불필요) | eval 평가 = 평가셋만 (풀 이미지·교사 가중치 불필요)
-case $MODE in label) NEED_MEMBERS="pool models";; train) NEED_MEMBERS="pool";; eval) NEED_MEMBERS="eval";; grid) NEED_MEMBERS="pool eval";; *) NEED_MEMBERS="";; esac
+case $MODE in label) NEED_MEMBERS="pool models";; train) NEED_MEMBERS="pool";; eval|baseline) NEED_MEMBERS="eval";; grid) NEED_MEMBERS="pool eval";; *) NEED_MEMBERS="";; esac
 # 토큰: 기본은 이슈 명령 인자(hf_...). 대안으로 /app/data/hf_token.txt 파일도 읽는다
 for tf in /app/data/hf_token.txt "$DATA_ROOT/hf_token.txt"; do [ -z "${HF_TOKEN:-}" ] && [ -f "$tf" ] && export HF_TOKEN=$(tr -d '[:space:]' < "$tf") && echo "[setup] HF token loaded from $tf"; done
 # HF 가중치 캐시(학생 7.5 GB)는 WORK_ROOT 에 둔다. /app/data 가 쓰기 가능하면 다음 작업이 재다운로드하지 않고, 아니면 파드와 함께 사라진다. /app/output 에는 두지 않는다
@@ -71,7 +76,7 @@ if [ "$MODE" = check ]; then   # 압축 해제 위치·쓰기 권한·여유 용
   echo "DATA_ROOT=$DATA_ROOT"; echo "WORK_ROOT=$WORK_ROOT"; echo "XROOT=$XROOT"; echo "OUT_ROOT=$OUT_ROOT (결과 전용)"; echo "HF_HOME=$HF_HOME"
   echo "=== 교사 라벨 (학생 학습이 읽을 것) ==="
   for pl in mixed indoor outdoor; do
-    LF=""; for c in "$OUT_ROOT/labels/$pl/teacher_labels.parquet" "$WORK_ROOT/labels/$pl/teacher_labels.parquet" "pools/$pl/teacher_labels.parquet"; do
+    LF=""; for c in "pools/$pl/teacher_labels.parquet" "$OUT_ROOT/labels/$pl/teacher_labels.parquet" "$WORK_ROOT/labels/$pl/teacher_labels.parquet"; do
       { [ -z "$LF" ] && [ -f "$c" ] && LF=$c; } || true; done
     if [ -n "$LF" ]; then echo "  $pl  →  $LF  ($(du -h "$LF" | cut -f1))"
     else echo "  $pl  →  없음.  bash run.sh label $pl 을 먼저 요청할 것"; fi; done
@@ -331,12 +336,13 @@ fi
 SUFFIX=_${POOL}_f${FOCAL}; ARMS=pools/$POOL/cells_v3.json; PCFG=configs/pool_${POOL}.yaml
 # 풀마다 판정에 쓰는 평가 세트만 평가한다 (실내 → iBims-1·NYUv2, 주행 → DDAD·nuScenes, 혼합 → 넷 다). EVAL_DATASETS 로 바꿀 수 있다
 case $POOL in indoor) DEF_DS="ibims1 nyuv2";; outdoor) DEF_DS="ddad nuscenes";; *) DEF_DS="ibims1 nyuv2 ddad nuscenes";; esac; EVAL_DATASETS=${EVAL_DATASETS:-$DEF_DS}
-# 교사 라벨 탐색 순서: ① 이 파드의 결과 ② /app/data 에 남긴 영속 사본 (파드 사이에 /app/output 이 안 넘어와도 살아남음) ③ 저장소에 커밋된 라벨
-LABEL_TRIED="$OUT_ROOT/labels/$POOL/teacher_labels.parquet | $WORK_ROOT/labels/$POOL/teacher_labels.parquet | pools/$POOL/teacher_labels.parquet"
-LABELS=""; for c in "$OUT_ROOT/labels/$POOL/teacher_labels.parquet" "$WORK_ROOT/labels/$POOL/teacher_labels.parquet" "pools/$POOL/teacher_labels.parquet"; do
+# 교사 라벨 탐색 순서 (v3): ① 저장소에 커밋된 라벨 — 라벨링이 끝났고 GT 열이 채워진 정본이다 ② 이 파드의 결과 ③ /app/data 의 영속 사본.
+# /app/data 에 옛 라벨링 작업의 사본(GT 열 없음)이 남아 있을 수 있으므로 저장소를 먼저 본다 (V-7)
+LABEL_TRIED="pools/$POOL/teacher_labels.parquet | $OUT_ROOT/labels/$POOL/teacher_labels.parquet | $WORK_ROOT/labels/$POOL/teacher_labels.parquet"
+LABELS=""; for c in "pools/$POOL/teacher_labels.parquet" "$OUT_ROOT/labels/$POOL/teacher_labels.parquet" "$WORK_ROOT/labels/$POOL/teacher_labels.parquet"; do
   { [ -z "$LABELS" ] && [ -f "$c" ] && LABELS=$c; } || true; done
 [ -f "$ARMS" ] || { say "!!! arms 파일 없음: $ARMS"; exit 1; }
-if [ "$MODE" = eval ]; then [ -d "$DATA_ROOT/eval" ] || { say "!!! DATA_ROOT 에 eval/ 없음 → bash run.sh data 먼저"; exit 1; }   # 평가는 교사 라벨도 풀 이미지도 쓰지 않는다 (어댑터 + 평가셋만)
+if [ "$MODE" = eval ] || [ "$MODE" = baseline ]; then [ -d "$DATA_ROOT/eval" ] || { say "!!! DATA_ROOT 에 eval/ 없음 → bash run.sh data 먼저"; exit 1; }   # 평가는 교사 라벨도 풀 이미지도 쓰지 않는다 (어댑터 + 평가셋만)
 else
   [ -n "$LABELS" ] || { say "!!! 교사 라벨을 찾지 못했다. 찾아본 곳: $LABEL_TRIED"; say "!!! → bash run.sh label $POOL 을 먼저 요청할 것"; exit 1; }
   [ -f "$PCFG" ] || { say "!!! 풀 설정 파일 없음: $PCFG"; exit 1; }
@@ -345,21 +351,21 @@ else
 fi
 CELLS=${CELLS:-$(python -c "import json;print(' '.join(c['tag'] for c in json.load(open('$ARMS'))['cells']))")}
 # 실행 단위 목록: "행파일;태그;시드;greedy(0/1)". 반복 셀은 soft/hard 에서만 (†arm 은 참조라 반복 불필요, V-3)
-UNITS=$(CELLS="$CELLS" SEEDS="${SEEDS:-0}" REPLICATES="${REPLICATES:-0}" COND="$COND" python - "$ARMS" <<'PYU'
+UNITS=$(CELLS="$CELLS" SEEDS="${SEEDS:-0}" REPLICATES="${REPLICATES:-0}" SKIP="${SKIP:-}" COND="$COND" python - "$ARMS" <<'PYU'
 import json, os, sys
-arms = json.load(open(sys.argv[1])); want = os.environ["CELLS"].split()
+arms = json.load(open(sys.argv[1])); want = os.environ["CELLS"].split(); skip = set(os.environ["SKIP"].split())
 out = []
 for c in arms["cells"]:
     if c["tag"] not in want: continue
     for s in os.environ["SEEDS"].split():
         out.append(f"{c['rows']};{c['tag']}{'' if s == '0' else '_s' + s};{s};{'0' if s == '0' else '1'}")
-if os.environ["REPLICATES"] == "1" and os.environ["COND"] in ("soft", "hard"):
-    out += [f"{r}.parquet;{r};0;1" for r in arms.get("replicates", [])]
-print(" ".join(out))
+if os.environ["REPLICATES"] == "1" and os.environ["COND"] in ("soft", "hard"):   # b0·p0 은 본 셀과 학습 행이 같아 돌리지 않는다 (33 이 본 셀로 대신, V-7)
+    out += [f"{r}.parquet;{r};0;1" for r in arms.get("replicates", []) if not r.endswith(("_b0", "_p0"))]
+print(" ".join(u for u in out if u.split(";")[1] not in skip))   # SKIP: 이미 있는 단위(예: 옛 격자에서 들여온 본 셀) 제외
 PYU
 )
-say "[$MODE] 풀 $POOL 조건 $COND 라벨 $LABELS 셀: $CELLS | 시드: ${SEEDS:-0} | 반복: ${REPLICATES:-0} → 단위 $(echo $UNITS | wc -w)개"
-if [ "$MODE" != eval ]; then   # 라벨 커버리지 확인 (평가는 라벨을 쓰지 않으므로 건너뜀)
+say "[$MODE] 풀 $POOL 조건 $COND 라벨 $LABELS 셀: $CELLS | 시드: ${SEEDS:-0} | 반복: ${REPLICATES:-0} | 제외: ${SKIP:-없음} → 단위 $(echo $UNITS | wc -w)개"
+if [ "$MODE" != eval ] && [ "$MODE" != baseline ]; then   # 라벨 커버리지 확인 (평가·베이스라인은 라벨을 쓰지 않으므로 건너뜀)
 CRC=0; python - "$LABELS" "$POOL" > "$OUT_ROOT/coverage_${POOL}.txt" 2>&1 <<'PYC' || CRC=$?
 import sys, glob, pandas as pd; lab, pool = sys.argv[1:3]
 L = pd.read_parquet(lab)[["image_id", "pixel_index"]].drop_duplicates(); need = pd.concat([pd.read_parquet(p) for p in glob.glob(f"pools/{pool}/rows_*.parquet")]).drop_duplicates()
@@ -367,6 +373,10 @@ m = need.merge(L, on=["image_id", "pixel_index"], how="left", indicator=True); m
 print(f"[grid] 라벨 커버리지: 필요 {len(need)} px, 부족 {miss} px"); sys.exit(1 if miss else 0)
 PYC
 cat "$OUT_ROOT/coverage_${POOL}.txt" | tee -a "$LOG"; rm -f "$OUT_ROOT/coverage_${POOL}.txt"; [ "$CRC" = 0 ] || { say "!!! 라벨 부족 → bash run.sh label $POOL 먼저"; exit 1; }
+case $COND in gthard|gtsoft)   # † arm: GT 가 없는 라벨이면 조용히 순수 arm 이 되므로 중단한다 (V-7)
+  NGT=$(python -c "import pandas as pd;print(int((pd.read_parquet('$LABELS')['gt']>0).sum()))")
+  say "[gt] $LABELS 의 GT 행 $NGT"; [ "$NGT" -gt 0 ] || { say "!!! $COND 인데 라벨에 GT 가 없다 — 04_extract_gt.py 를 거친 저장소 라벨이어야 한다"; exit 1; };;
+esac
 fi
 train_cell() { local rows tag seed greedy; IFS=';' read -r rows tag seed greedy <<< "$1"; local ad=$OUT_ROOT/checkpoints/${COND}_${tag}${SUFFIX}
   [ -f "$ad/adapter_model.safetensors" ] && { say "$tag 학습 완료됨 — 건너뜀"; return 0; }
@@ -437,18 +447,27 @@ case $MODE in
            say "!!! → 같은 파드에서 학습했다면 bash run.sh train $POOL $COND 먼저"
            say "!!! → 결과 볼륨이 작업 사이에 비워지는 환경이면 학습 결과가 넘어오지 않는다. bash run.sh grid $POOL $COND 로 학습과 평가를 한 작업에 돌릴 것"; exit 1; }
          say "[eval] 학습된 어댑터 $NAD/$NCELL 단위"; run_cells eval_cell;;
+  baseline)   # 학습 안 한 학생의 greedy 평가 (모든 표의 zero-shot 행) + 교사 행(ref 기록에서, GPU 불필요) → tables/zeroshot_baselines.md (V-7)
+         BDS=$(echo $EVAL_DATASETS | tr ' ' ',')
+         say "[baseline] zero-shot 학생 greedy 평가: $BDS"
+         python -u experiments/21_eval_student.py --tag zeroshot_f${FOCAL} --focal "$FOCAL" --eval_set large --datasets "$BDS" --greedy_only ${EVAL_EXTRA:-} >> "$OUT_ROOT/eval_zeroshot_f${FOCAL}_large.log" 2>&1 || say "!!! zero-shot 평가 실패"
+         python experiments/34_baselines.py --root "$OUT_ROOT" --datasets "$BDS" 2>&1 | tee -a "$LOG" || say "!!! 베이스라인 표 실패";;
   *)     run_cells train_cell; run_cells eval_cell;;
 esac
+if [ "$MODE" != baseline ]; then
 for es in $EVAL_SETS; do [ "$es" = none ] || [ -z "$EVAL_DATASETS" ] && continue; python experiments/31_grid.py --cond "$COND" --suffix "$SUFFIX" --eval_set "$es" --arms "$ARMS" --datasets "$(echo $EVAL_DATASETS | tr ' ' ',')" >> "$LOG" 2>&1 || say "!!! 표 실패 $es"; done
+fi
 say "[$MODE] 완료 $POOL $COND. 결과: $OUT_ROOT/{eval,tables,figures,checkpoints}"
-for es in $EVAL_SETS; do [ "$es" = none ] || [ -z "$EVAL_DATASETS" ] && continue; suf=""; [ "$es" = large ] && suf=_large; echo "===== 요약 $POOL $COND ($es) ====="; head -40 "$OUT_ROOT/tables/table_grid_${COND}${SUFFIX}${suf}.md" 2>/dev/null || echo "  (표 파일 없음: tables/table_grid_${COND}${SUFFIX}${suf}.md — 31_grid.py 로그 확인)"; done
-python - "$OUT_ROOT" "results_${COND}_${POOL}" "${COND}_" "$SUFFIX" <<'PYS' || say "!!! zip 생성 실패 — 결과 파일은 $OUT_ROOT 에 그대로 있다 (여유 공간 확인)"
-import sys, os, zipfile; root, name, cond, suffix = sys.argv[1:5]
+[ "$MODE" = baseline ] || for es in $EVAL_SETS; do [ "$es" = none ] || [ -z "$EVAL_DATASETS" ] && continue; suf=""; [ "$es" = large ] && suf=_large; echo "===== 요약 $POOL $COND ($es) ====="; head -40 "$OUT_ROOT/tables/table_grid_${COND}${SUFFIX}${suf}.md" 2>/dev/null || echo "  (표 파일 없음: tables/table_grid_${COND}${SUFFIX}${suf}.md — 31_grid.py 로그 확인)"; done
+ZSUF=$SUFFIX; [ "$MODE" = baseline ] && ZSUF=""   # 베이스라인 파일(eval_zeroshot_f750_*, tables/zeroshot_*)에는 풀 접미사가 없다
+python - "$OUT_ROOT" "results_${COND}_${POOL}" "${COND}_" "$ZSUF" <<'PYS' || say "!!! zip 생성 실패 — 결과 파일은 $OUT_ROOT 에 그대로 있다 (여유 공간 확인)"
+import sys, os, re, zipfile; root, name, cond, suffix = sys.argv[1:5]
 with zipfile.ZipFile(f"{root}/{name}.zip", "w", zipfile.ZIP_DEFLATED) as z:
     for dp, dn, fn in os.walk(root):
         dn[:] = [d for d in dn if d not in ("hf", "data", "labels")]
         for f in fn:
             rel = os.path.relpath(os.path.join(dp, f), root)
-            if (cond in rel and suffix in rel) or rel.startswith("run_"): z.write(os.path.join(dp, f), rel)
+            if f.endswith(".zip"): continue   # 쓰는 중인 zip 자신·다른 결과 zip 제외
+            if (re.search(r"(^|[/_])" + re.escape(cond), rel) and suffix in rel) or rel.startswith("run_"): z.write(os.path.join(dp, f), rel)   # "soft_" 가 "gtsoft_" 에 걸리지 않게 앞 경계 확인
 print(f"zip: {root}/{name}.zip  {os.path.getsize(f'{root}/{name}.zip')/1e6:.1f} MB")
 PYS

@@ -14,8 +14,8 @@ unchanged, prior results are not. Design rationale: [paper/design_v3_corrections
 | Grid | budget B ∈ {400, 1600, 6400} × pixels-per-image k ∈ {1, 4, 16}, N = B/k — 9 nested cells, every budget row is a 3-way equal-budget comparison (larger budgets can be re-added later by the fixed rule: every k with N = B/k ≤ pool size) |
 | Pools | indoor (SUN RGB-D, NYUv2), driving (KITTI), mixed (50/50), 6,400 images each, order v5 (near-duplicates demoted: dHash Hamming ≤ 10 and 32×32 grayscale correlation > 0.9) |
 | Labels | DepthLM 12B answers on the pool pixels; the v3 grid and its replicate cells are fully covered by the existing 44,800 labels per pool — **zero new teacher queries** (verified by `experiments/03_build_cells_v3.py`) |
-| Ground truth | never used for training in the main grid; a separate, clearly-marked `Loss_gt + Loss_pseudo` arm treats GT as budget-external information |
-| Noise floor | the B = 400 arms are replicated over image blocks and pixel indices (free relabelings); equal-budget claims must exceed the replicate spread |
+| Ground truth | never used by the pure arms (`soft`, `hard`); the † arms `gt+soft` / `gt+hard` add λ = 0.1 · CE(GT) and are reported beside them but excluded from the equal-budget ranking |
+| Noise floor | the B = 400 arms are re-run over training subsets (image blocks / pixel indices, free relabelings) and over seeds 0/1/2; equal-budget claims must exceed the larger spread |
 | Evaluation | δ1 (max(pred/gt, gt/pred) < 1.25, identical to the official DepthLM metric) on iBims-1, NYUv2 (indoor), DDAD, nuScenes (driving), ETH3D fully held out; each pool on its own domain only |
 
 Why this design: DepthLM's Finding 4 ("1 labeled pixel per training image … image diversity is more important than
@@ -28,27 +28,34 @@ so scene counts are reported as descriptive statistics only.
 ## Layout
 
 ```
+run.sh                             H200 entry point: MODE=grid|train|eval|baseline|smoke, CELLS / SEEDS / REPLICATES / SKIP
 experiments/03_build_cells_v3.py   (B,k) grid + replicate cells + label-coverage check (run; zero new queries)
-experiments/20_train_student.py    LoRA training: hard / soft / wsoft / gt conditions, --decimals {1,2}
-experiments/21_eval_student.py     per-cell evaluation
-experiments/31_grid.py, 32_decide.py   result tables and pre-registered decision rule (comparison lists: being updated to v3 rows)
-pools/<pool>/                      pool.jsonl (v5 order), teacher_labels.parquet, rows_B*_k*.parquet, rep_*.parquet, cells_v3.json
-configs/                           pool and evaluation set configs
+experiments/04_extract_gt.py       GT for the pool pixels (for the † arms only), validated against the teacher labels
+experiments/05_import_legacy.py    maps v2 (N,k) results onto identical v3 (B,k) cells, with provenance
+experiments/20_train_student.py    LoRA training: soft / hard / gtsoft / gthard (+ gt, wsoft), --seed, --decimals {1,2}
+experiments/21_eval_student.py     per-cell evaluation (full, or --greedy_only for seeds and replicates)
+experiments/31_grid.py, 32_decide.py   per-pool tables and the pre-registered decision rule (--floor = noise floor)
+experiments/33_noise_floor.py      B = 400 spread over subsets and seeds → noise_floor_<pool>.json
+experiments/34_baselines.py        teacher row (from recorded teacher outputs in ref/) + zero-shot row
+pools/<pool>/                      pool.jsonl (v5 order), teacher_labels.parquet (+ gt), rows_B*_k*.parquet, rep_*.parquet, cells_v3.json, gt_coverage.md
+tables/                            committed copies of the tables behind the numbers below
 third_party/DepthLM_Official/      official curation/metric utilities (FAIR NC — see LICENSE, NOTICE)
-paper/design_v3_corrections.md     the C-1..C-4 design decisions with evidence (Korean)
+paper/design_v3_corrections.md     the C-1..C-4 design decisions with evidence (Korean); later amendments in NOTES.md V-1..V-7
 ```
 
 ## Status
 
-Registered 2026-09-30. Grid rows and replicate cells generated and verified for all three pools; training runs not
-started. `run.sh` still targets the old grid and must not be used until updated (see NOTES.md checklist).
+2026-09-30: implementation complete and smoke-tested on GPU (every loss, greedy/full evaluation, baseline mode, the
+full `run.sh smoke` pipeline). Indoor soft: 6 of 9 cells imported from the v2 H200 run. Teacher rows filled for all
+four evaluation sets. Next: H200 submissions in the order under [Order of work](#order-of-work).
 
 ## Results
 
-Every cell is `δ1 / AbsRel` on the pool's own evaluation sets, filled in from each cell's evaluation log as it
-finishes; a dash means not evaluated yet. Numbers are taken only from logs of this repository (pre-registration:
-the decision rule of `32_decide.py` is applied per budget row; equal-budget claims must also exceed the B = 400
-replicate spread below). **`soft` and `hard` are both pseudo-label losses (`Loss_pseudo`)** — hard is CE on the
+Every cell is `δ1 / AbsRel` on the pool's own evaluation sets, filled in from each cell's evaluation file as it
+finishes; a dash means not evaluated yet. Numbers come only from evaluation files — this repository's H200 runs,
+the v2 H200 runs imported cell-for-cell by `05_import_legacy.py` (provenance in `tables/import_legacy_*.md`), and
+the teacher's recorded outputs in `ref/` (pre-registration: the decision rule of `32_decide.py` is applied per
+budget row; equal-budget claims must also exceed the B = 400 noise floor below). **`soft` and `hard` are both pseudo-label losses (`Loss_pseudo`)** — hard is CE on the
 teacher's answer, soft is KL to the teacher's digit distribution; neither uses ground truth.
 **The † rows are `Loss_gt + Loss_pseudo`**, trained alongside the pure arms in the same cells, and the pseudo term
 keeps its two forms: `gt+hard` = (1−λ)·CE(teacher answer) + λ·CE(GT), `gt+soft` = (1−λ)·KL(teacher distribution)
@@ -56,9 +63,12 @@ keeps its two forms: `gt+hard` = (1−λ)·CE(teacher answer) + λ·CE(GT), `gt+
 on the true-label term [arXiv:1503.02531]; the paper gives no universal value, so the common instantiation 0.1 is
 pre-registered, and the weighted average keeps the effective learning rate comparable to the pure arms. † marks
 budget-external information (GT pixels on top of the same teacher labels): reported in place, but **excluded from
-the equal-budget ranking** (C-3b). GT coverage of the pool pixels is extracted beforehand and reported per pool
-(the current label files carry no GT yet; extraction is a prerequisite).
-The `teacher` row is DepthLM 12B evaluated once on the same pixels with the same midpoint decoding;
+the equal-budget ranking** (C-3b). GT labels use the same first-decimal truncation as the teacher labels. GT covers
+84 % of the indoor rows, 45 % of mixed and **only 4.3 % of driving** (raw KITTI frames have no GT;
+`pools/<pool>/gt_coverage.md`), so the driving † arms differ from the pure arms on few rows.
+The `teacher` row is DepthLM 12B on the same pixels with the same midpoint decoding, computed from its recorded
+outputs in `ref/` (`34_baselines.py`); like the students it is scored against Euclidean distance to the camera.
+With z-depth, the paper's convention, the teacher gets DDAD 0.676 and nuScenes 0.802 (paper: 0.819).
 `student zero-shot` is the untrained student. Both are baselines, not cells, and carry no loss condition.
 All runs execute on H200; pools are filled in the order indoor → driving → mixed. The B = 25,600 extension is
 dropped from the grid for now (re-added later by the fixed rule if needed).
@@ -103,7 +113,7 @@ dropped from the grid for now (re-added later by the fixed rule if needed).
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
-| | | | teacher | — | — |
+| | | | teacher | 0.809 / 0.143 | 0.881 / 0.125 |
 | | | | student zero-shot | — | — |
 
 ### Driving pool — evaluated on DDAD, nuScenes (mini)
@@ -146,7 +156,7 @@ dropped from the grid for now (re-added later by the fixed rule if needed).
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
-| | | | teacher | — | — |
+| | | | teacher | 0.653 / 0.240 | 0.728 / 0.601 |
 | | | | student zero-shot | — | — |
 
 ### Mixed pool (indoor 50 / driving 50) — evaluated on all four sets
@@ -189,25 +199,28 @@ dropped from the grid for now (re-added later by the fixed rule if needed).
 | | | | hard | — | — | — | — |
 | | | | gt+soft † | — | — | — | — |
 | | | | gt+hard † | — | — | — | — |
-| | | | teacher | — | — | — | — |
+| | | | teacher | 0.809 / 0.143 | 0.881 / 0.125 | 0.653 / 0.240 | 0.728 / 0.601 |
 | | | | student zero-shot | — | — | — | — |
 
-### Noise floor — B = 400 replicate cells (δ1 spread across 4 replicates, per set)
+### Noise floor — B = 400 (δ1 spread per set, `33_noise_floor.py`)
 
-Replicates re-draw the training subset inside the existing labels (image blocks for N = 25 / N = 100, pixel indices
-for N = 400). The spread (max − min of δ1 over the 4 replicates) is the floor an equal-budget difference must exceed.
+Two kinds of repeat, both inside the existing labels. **Subset**: the training subset is re-drawn (image blocks
+b0–b3 for N = 25 / N = 100, pixel indices p0–p3 for N = 400; b0/p0 are the main cells themselves, so they are not
+re-run). **Seed**: the main cell is re-run with seeds 1 and 2, which change initialization, dropout and data order.
+The spread is max − min of δ1 within an arm, and the floor per set is the largest spread. An equal-budget difference
+must exceed it before it counts as a claim (`32_decide.py --floor`).
 
-| Pool | Arm | Replicates | Loss | Spread per set |
+| Pool | Arm | Subset spread (4 draws) | Seed spread (3 seeds) | Loss |
 |:--|:--|:--|:--|:--|
-| indoor | N=25 k=16 | image blocks ×4 | soft / hard | — |
-| indoor | N=100 k=4 | image blocks ×4 | soft / hard | — |
-| indoor | N=400 k=1 | pixel indices ×4 | soft / hard | — |
-| driving | N=25 k=16 | image blocks ×4 | soft / hard | — |
-| driving | N=100 k=4 | image blocks ×4 | soft / hard | — |
-| driving | N=400 k=1 | pixel indices ×4 | soft / hard | — |
-| mixed | N=25 k=16 | image blocks ×4 | soft / hard | — |
-| mixed | N=100 k=4 | image blocks ×4 | soft / hard | — |
-| mixed | N=400 k=1 | pixel indices ×4 | soft / hard | — |
+| indoor | N=25 k=16 | — | — | soft / hard |
+| indoor | N=100 k=4 | — | — | soft / hard |
+| indoor | N=400 k=1 | — | — | soft / hard |
+| driving | N=25 k=16 | — | — | soft / hard |
+| driving | N=100 k=4 | — | — | soft / hard |
+| driving | N=400 k=1 | — | — | soft / hard |
+| mixed | N=25 k=16 | — | — | soft / hard |
+| mixed | N=100 k=4 | — | — | soft / hard |
+| mixed | N=400 k=1 | — | — | soft / hard |
 
 ### Side experiments (each gated, reported separately from the main grid)
 
@@ -220,40 +233,41 @@ for N = 400). The spread (max − min of δ1 over the 4 replicates) is the floor
 
 ## Order of work
 
-All experiments run on H200 (one job at a time on a whole GPU, as before: GitHub issue → Jenkins → container).
-Pools are filled **indoor → driving → mixed**, and within a pool the cheapest rows go first so the tables fill
-fast. A job is one (pool, budget row, loss) with loss ∈ {soft, hard, gt+soft, gt+hard}: twelve grid jobs per
-pool plus one baseline job, each well under a day.
+All runs execute on H200: one job at a time on a whole GPU (quota `7`), submitted as a GitHub issue whose
+command is one line. Settings go either as `KEY=value` arguments (lists comma-separated) or as environment
+variables. The driving pool is called `outdoor` in commands.
 
-**Evaluation (pre-registered)**: everything is evaluated on the large sets (`ref/dist_*`) — the small pixel sets
-are not used, since their per-replicate sampling noise (~±0.03 δ1 at ~300 px) is the same size as the allocation
-effects being judged (D-27: ≤ 0.03). The economy comes from *what* is computed, not *where*: main cells (seed 0)
-get the full evaluation including the uncertainty tree (CoV), while extra seeds and the 12 replicate cells get
-**greedy-only** evaluation (single forward per pixel, no tree — ≈ 6× cheaper), which is all a spread estimate needs.
+**Evaluation (pre-registered).** Everything is evaluated on the large sets (`ref/dist_*`, all driving pixels). The
+small pixel sets are not used: at ~300 px their sampling noise (~±0.03 δ1) is as large as the allocation effects
+being judged (≤ 0.03 in D-27). The saving comes from *what* is computed: main cells (seed 0) get the full evaluation
+including the uncertainty tree, while extra seeds and subset repeats get greedy-only evaluation (≈ 6× cheaper), which
+is all a spread needs.
 
-0. **Prerequisites (local, before any submission)**: (a) update `31_grid.py` / `32_decide.py` comparison lists to
-   the v3 budget rows; (b) update `run.sh` to `cells_v3.json` / `rows_B*` / `rep_*`; (c) **extract GT for the pool
-   pixels** (the label files currently carry none — SUN RGB-D/NYUv2/KITTI depth maps are on the local disk) and
-   report coverage per pool; (d) add a greedy-only flag to `21_eval_student.py`; (e) smoke-test one tiny cell.
-1. **Job 0 — baselines (H200, once, ≈ 4–6 h)**: teacher on all four evaluation sets (same pixels, midpoint
-   decoding) + zero-shot student. Fills the two baseline rows of every table first.
-2. **Indoor pool, cheapest first — submission order** (then the same pattern for driving, then mixed).
-   The v2 grids already trained on H200 map cell-for-cell onto v3 (nested design: identical rows, labels, seed —
-   `05_import_legacy.py`), so indoor **soft seed-0 results for 6 of 9 cells are already imported**, and the
-   running indoor-hard job will supply the same 6 for hard. Only the gaps are submitted:
-   - **A1/A2: B = 400, soft / hard (≈ 10–12 h each)** — 3 arms × 3 seeds + 12 replicate cells
-     (training ≈ 1.3 h; main cells full eval, the other 18 checkpoints greedy-only). B400_k1 seed 0 repeats the
-     imported cell (~2 h redundancy, kept for job simplicity — also a free reproducibility check).
-   - **B1': B = 1,600, soft — missing cell only** (`CELLS="B1600_k16"`, ≈ 3 h); **B2'** likewise for hard after
-     its zip arrives. B1600_k1/k4 and the whole B=6,400 row come from the import.
-   - **A3/A4, B3/B4, C3/C4: gt+soft / gt+hard** — no legacy exists for the † arms, so these run in full
-     (3 arms × 1 seed per budget row, ≈ 7–9 h each).
-   For driving and mixed there is no (or only partial local) legacy; driving runs the full pattern, and the local
-   mixed v5 results can be imported the same way when that pool starts.
-   Each cell is evaluated inside its job and its table row is filled from the log as soon as the zip arrives.
-3. **Decide per pool** (`32_decide.py`) after its jobs: pre-registered rule per budget row (soft/hard only; the
-   † rows are excluded from ranking); claims only where the CI excludes zero on all of the pool's sets and the
-   difference exceeds the noise floor. Then move to the next pool.
-4. **Side experiments** after the main rows they depend on: W1 pilot (needs its cell's KL result), decimals
-   ablation (needs the 2-decimal re-label), GT-only reference (needs the grid optimum), recipe-mix (needs ≥ 1
-   domain claim).
+**Now running** (old repository): the v2 `grid indoor hard` job. Let it finish; its zip supplies 6 of the 9 indoor
+hard cells through `05_import_legacy.py`, exactly as the soft zip already did.
+
+**Indoor submissions, in order** (estimates from the v2 H200 throughput, rough):
+
+| # | One-line command | Fills | Est. |
+|---:|:--|:--|--:|
+| 1 | `bash run.sh smoke` | checks the new checkout on H200 | 0.5 h |
+| 2 | `bash run.sh baseline mixed` | zero-shot row of all three tables (four sets, greedy) | 1 h |
+| 3 | `bash run.sh grid indoor soft CELLS=B400_k1,B400_k4,B400_k16 SEEDS=0,1,2 REPLICATES=1 SKIP=B400_k1` | B = 400 soft row + 2 extra seeds + 9 subset repeats (17 units; B400_k1 seed 0 is imported) | 6–9 h |
+| 4 | same as 3 with `hard` | B = 400 hard row + noise floor (needs the hard zip imported first) | 6–9 h |
+| 5 | `bash run.sh grid indoor soft CELLS=B1600_k16` | the last missing soft cell | 3 h |
+| 6 | `bash run.sh grid indoor hard CELLS=B1600_k16` | the last missing hard cell | 3 h |
+| 7 | `bash run.sh grid indoor gtsoft CELLS=B400_k1,B400_k4,B400_k16` | gt+soft †, B = 400 | 5–7 h |
+| 8 | `bash run.sh grid indoor gthard CELLS=B400_k1,B400_k4,B400_k16` | gt+hard †, B = 400 | 5–7 h |
+| 9–10 | as 7–8 with `CELLS=B1600_k1,B1600_k4,B1600_k16` | † rows, B = 1,600 | 6–8 h |
+| 11–12 | as 7–8 with `CELLS=B6400_k1,B6400_k4,B6400_k16` | † rows, B = 6,400 | 8–10 h |
+
+After each zip: import it, fill the table. After the indoor jobs: `33_noise_floor.py --pool indoor`, then
+`32_decide.py --pool indoor --floor results/tables/noise_floor_indoor.json` gives the indoor verdict.
+
+**Then driving (`outdoor`), then mixed**, same pattern. Driving has no legacy runs, so its soft/hard rows run in
+full: B = 400 as in 3–4 without `SKIP`, then `CELLS=B1600_k1,B1600_k4,B1600_k16` and `CELLS=B6400_k1,B6400_k4,B6400_k16`
+for each loss, then the † rows. For mixed, the local v5 mixed cells are imported where they match before submitting.
+
+**Last, the side experiments**, each after what it depends on: W1 pilot (needs its cell's KL result), 1-vs-2-decimal
+ablation (needs a 2-decimal re-label of a fixed subset), GT-only reference (needs the grid optimum), recipe-mix (needs
+at least one domain claim, C-4d).

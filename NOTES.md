@@ -15,7 +15,9 @@
 - [x] `33_noise_floor.py` 반복 셀 집계 → noise_floor_<pool>.json (32_decide --floor 입력) — 2026-09-30
 - [x] `run.sh` v3 갱신 — cells_v3.json, 단위 = 셀×SEEDS(+REPLICATES 반복 셀), 시드>0·반복은 greedy 전용 평가 — 2026-09-30
 - [x] 스모크: gtsoft·gthard GPU 학습, `--greedy_only` 평가, `bash run.sh smoke` 전체 파이프라인(30스텝+3px, 파싱 100 %) — 2026-09-30
-- [ ] indoor B=400 행부터 H200 제출 (A1: soft SEEDS="0 1 2" REPLICATES=1 / A2: hard 동일 / A3: gtsoft / A4: gthard)
+- [x] 최종 점검 (V-7): 결함 8건 수정, 베이스라인 모드·교사 행, 이슈 한 줄 KEY=값 인자 — 2026-09-30
+- [ ] (사용자) 옛 저장소에서 도는 indoor hard zip 수령 → `05_import_legacy.py --cond hard` 로 6셀 통합
+- [ ] H200 제출 — README "Order of work" 표 1–12 (indoor) → outdoor → mixed
 - [ ] W1 파일럿: 값 공간(log-depth) 수식·대상 셀 확정 → 한 셀 실행
 - [ ] hard 1자리 vs 2자리 ablation: 부분집합 2자리 재라벨(teacher_full) → `--decimals 2` 비교
 - [ ] 레시피-혼합: per-row 조건 학습 코드 (게이트: 도메인 격자 주장 ≥1건)
@@ -73,6 +75,28 @@
 - H200 운영 (사용자 확인): 이슈에 저장소 주소만 바꿔 넣으면 되고, /app/data 의 30 GB 팩·drive_eval 팩 그대로 재사용.
   담당자에게 추가로 보낼 데이터 없음. 남은 indoor 제출 = A1/A2(B400 행+시드+반복), B1'/B2'(B1600_k16 만),
   gt arm 행별 전체(A3/A4·B3/B4·C3/C4) — README Order of work 갱신됨.
+
+### V-7 (2026-09-30) 최종 점검 — H200 제출 전 결함 8건 수정 (사용자 요청 "최종 점검")
+1. **라벨 탐색 순서 (치명)**: run.sh 가 /app/output → /app/data 영속 사본 → 저장소 순으로 라벨을 찾았다. /app/data 에 옛
+   라벨링 사본(GT 열 없음)이 있으면 gt+soft·gt+hard 가 **조용히 순수 arm 이 된다**. → 저장소(GT 채운 정본) 먼저 +
+   † 조건에서 GT 행 0 이면 중단.
+2. **31_grid 부호**: 등예산 쌍을 셀 파일 순서로 짝지어, v3(k 오름차순 = N 내림차순)에서 "적은 이미지 − 많은 이미지"로
+   뒤집혔다 → N 내림차순 정렬로 "많은 − 적은" 고정 (32_decide 와 동일). 수정 후 D-27 의 NYUv2 −0.024 [−0.042, −0.006],
+   +0.021, +0.027 을 그대로 재현.
+3. **시드 반복이 초기화만 바꿨다**: 셔플이 seed=0 고정 → `--seed` 가 데이터 순서도 정함 (시드 0 은 종전과 동일해 들여온 결과 유효).
+   33 은 시드 산포도 바닥에 넣고, b0·p0 반복은 본 셀과 학습 행이 같으므로 안 돌리고 본 셀로 대신 (작업당 3단위 절약).
+4. **GT 라벨 규약 불일치**: GT 답은 반올림(`:.1f`), 교사 라벨은 절사 → 중간값 복호(+0.05)와 어긋남. `trunc1` 절사로 통일.
+   float32 GT 때문에 ε 필요: 0.001–80 m mm 격자 8만 개에서 ε=0 → 318개, 1e-6 → 296개, **1e-4 → 0개** 오류. 2자리 ablation 경로도 같은 수정.
+5. **zip 필터**: "soft_" 가 "gtsoft_" 에도 걸림 → 앞 경계 정규식. 베이스라인 zip 이 자기 자신을 담던 것도 제외.
+6. **베이스라인**: `run.sh baseline` 신설(zero-shot 학생 greedy, 네 세트) + `34_baselines.py`. 교사 행은 ref/dist_* 교사 기록에서
+   계산 — iBims-1 0.809 / NYUv2 0.881 (D-75 와 동일), DDAD 0.653 / nuScenes 0.728 (유클리드; z 깊이 0.676 / 0.802, D-26 과 일치).
+   H200 주행 팩과 픽셀 일치 확인: nuScenes 2,500/2,500, DDAD 2,496/2,500. **주의: 로컬 ~/data/drive_eval/nuscenes 는 옛 trainval
+   세트다 (mini 는 nuscenes_mini) — 로컬에서 주행 평가를 할 일이 생기면 경로 확인.**
+7. **이슈 한 줄 명령**: 요청서는 한 줄 명령이라 `VAR=값 bash …` 가 셸로 해석되는지 불확실 → run.sh 가 `CELLS=a,b` 형식 인자도
+   받음 (허용 목록만, 쉼표 → 공백). `SKIP` 추가 (들여온 본 셀 재학습 방지).
+8. **git 위생**: .gitignore 에 hf_token.txt·*.token·/data/·*.tar.part_* (옛 저장소에 있던 것), README 수치의 근거 표를 `tables/` 에 커밋.
+- 검증: 모든 스크립트 구문 OK, gthard 시드 1 + rows 제한 GPU 학습 OK, `run.sh baseline` 제한 실행 OK(zip 내용 확인),
+  들여온 indoor soft 로 31·32·33 실행 OK (32: B1600 soft "약한 근거: 픽셀 많은 쪽", B6400 k1−k16 "약한 근거: 이미지 많은 쪽" — D-27 과 같음).
 
 ## 실행 로그
 

@@ -42,11 +42,11 @@ def paired(t1, t2, ds):
 comp = []
 for ds in NAMES:
     for b in sorted({c["budget"] for c in have}):     # (d) 같은 예산
-        cs = [c for c in have if c["budget"] == b]
+        cs = sorted([c for c in have if c["budget"] == b], key=lambda c: -c["N"])   # 이미지 많은 순 — 셀 파일 순서와 무관하게 부호 고정 (32_decide 와 같은 규약)
         for i in range(len(cs)):
             for j in range(i + 1, len(cs)):
-                r = paired(cs[j]["tag"], cs[i]["tag"], ds)     # 많은 이미지 − 적은 이미지
-                if r: comp.append({"비교": f"예산 {b}: N{cs[j]['N']}k{cs[j]['k']} − N{cs[i]['N']}k{cs[i]['k']}", "종류": "고정 예산 배분", "dataset": NAMES[ds], "Δδ1": f"{r[0]:+.3f} [{r[1]:+.3f}, {r[2]:+.3f}]", "n": r[3]})
+                r = paired(cs[i]["tag"], cs[j]["tag"], ds)     # 많은 이미지 − 적은 이미지
+                if r: comp.append({"비교": f"예산 {b}: N{cs[i]['N']}k{cs[i]['k']} − N{cs[j]['N']}k{cs[j]['k']}", "종류": "고정 예산 배분", "dataset": NAMES[ds], "Δδ1": f"{r[0]:+.3f} [{r[1]:+.3f}, {r[2]:+.3f}]", "n": r[3]})
     for N in sorted({c["N"] for c in have}):           # (b) N 고정 (v3 격자에서는 대각선): 라벨 밀도 한계효용
         ks = sorted(c["k"] for c in have if c["N"] == N)
         for i in range(len(ks) - 1):

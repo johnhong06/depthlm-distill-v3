@@ -21,6 +21,7 @@ PROMPT = ("The red arrow in the image points at a specific location. Estimate th
 STUDENT_FOCAL = 750.0   # 학생 입력 정규화 초점거리. 교사(750)와 동일 = 해상도 교란 제거 (2026-09-22 사용자 지적). --focal 로 변경 가능
 DTYPE = torch.bfloat16
 def resolve(p): p = os.path.expandvars(os.path.expanduser(p)); return p if os.path.isabs(p) else os.path.join(ROOT, p)
+def trunc1(v): return np.floor(float(v) * 10 + 1e-4) / 10   # GT 도 교사 라벨처럼 첫째 자리 절사 (중간값 복호와 같은 규약). 1e-4: float32 GT(2.3→2.2999…)가 한 칸 내려가지 않게 — 0.001–80 m mm 격자 오류 0 (V-7)
 
 class Data:
     def __init__(self, cond, limit=0, seed=0, labels=("pools/mixed/teacher_labels.parquet",), pools=("configs/pool_mixed.yaml",)):
@@ -52,9 +53,9 @@ def main():
     ap.add_argument("--steps", type=int, default=0); ap.add_argument("--accum", type=int, default=8); ap.add_argument("--lr", type=float, default=1e-4); ap.add_argument("--device", default="cuda:0"); ap.add_argument("--out", default=os.environ.get("OUT_ROOT", "results") + "/checkpoints"); ap.add_argument("--seed", type=int, default=0); ap.add_argument("--fp32", action="store_true", help="CPU 테스트용"); ap.add_argument("--labels", nargs="+", default=["pools/mixed/teacher_labels.parquet"]); ap.add_argument("--pools", nargs="+", default=["configs/pool_mixed.yaml"]); ap.add_argument("--rows", default="", help="(image_id, pixel_index) parquet — 이 행만 학습 (예산·배분 arm)"); ap.add_argument("--tag", default=""); ap.add_argument("--focal", type=float, default=750.0, help="학생 입력 정규화 초점거리 (교사=750)"); ap.add_argument("--decimals", type=int, default=1, choices=[1, 2], help="라벨 소수 자릿수 (2 는 --subset 의 teacher_full 사용)"); ap.add_argument("--subset", default="", help="해상도 ablation: 이 parquet 의 (image_id,pixel_index) 행만 사용")
     args = ap.parse_args(); torch.manual_seed(args.seed); random.seed(args.seed); dev = args.device
     global STUDENT_FOCAL; STUDENT_FOCAL = args.focal; print(f"student focal {STUDENT_FOCAL}", flush=True)
-    data = Data(args.cond, args.limit, seed=0, labels=tuple(args.labels), pools=tuple(args.pools))
+    data = Data(args.cond, args.limit, seed=args.seed, labels=tuple(args.labels), pools=tuple(args.pools))   # 셔플도 시드를 따른다 — 시드 0 은 종전과 동일 (V-7)
     if args.rows:     # arm 선택: 행을 제한한 뒤 같은 seed 로 다시 섞어 조건 간 순서 동일
-        want = pd.read_parquet(resolve(args.rows))[["image_id", "pixel_index"]].drop_duplicates(); data.rows = data.rows.merge(want, on=["image_id", "pixel_index"]).sample(frac=1.0, random_state=0).reset_index(drop=True)
+        want = pd.read_parquet(resolve(args.rows))[["image_id", "pixel_index"]].drop_duplicates(); data.rows = data.rows.merge(want, on=["image_id", "pixel_index"]).sample(frac=1.0, random_state=args.seed).reset_index(drop=True)
         data.w = np.ones(len(data.rows)) if args.cond != "wsoft" else (lambda w: w / w.mean())(np.clip(1.0 - data.rows.teacher_cov.values / 0.3, 0.2, 1.0)); print(f"rows {len(data.rows)}", flush=True)
     if args.subset:   # 같은 부분집합·같은 순서에서 라벨 자릿수만 다르게 (D-75)
         sub = pd.read_parquet(resolve(args.subset))[["image_id", "pixel_index", "teacher_full"]]; sub = sub[sub.teacher_full.notna()]
@@ -73,9 +74,9 @@ def main():
     for step in range(total):
         r = data.rows.iloc[step % len(data.rows)]; im = data.image(r)
         if im is None: continue
-        if args.cond == "gt": answer = f"{r['gt']:.1f}"
+        if args.cond == "gt": answer = f"{trunc1(r['gt']):.1f}"
         elif args.decimals == 2: answer = f"{r.teacher_full:.2f}"                       # 교사 숫자 그대로(둘째 자리)
-        elif args.subset: answer = f"{np.floor(r.teacher_full * 10) / 10:.1f}"          # 같은 숫자를 첫째 자리에서 절사 (v1 라벨 규칙과 동일)
+        elif args.subset: answer = f"{trunc1(r.teacher_full):.1f}"                      # 같은 숫자를 첫째 자리에서 절사 (v1 라벨 규칙과 동일)
         else: answer = f"{r.teacher_greedy1:.1f}"
         enc, P, ans_ids = build(proc, im, answer, dev); out = model(**enc); logits = out.logits[0, P - 1: P - 1 + len(ans_ids)].float()   # 각 답 토큰 위치의 예측 로짓
         if args.cond in ("hard", "gt", "gthard"):
@@ -94,7 +95,7 @@ def main():
                     losses.append(torch.nn.functional.cross_entropy(logits[k][None], torch.tensor([tid], device=dev)))
             loss = torch.stack(losses).mean() * float(data.w[step % len(data.rows)])
         if args.cond in ("gthard", "gtsoft") and float(r["gt"]) > 0:   # † arm: GT 있는 행만 (1−λ)·pseudo + λ·CE(GT)
-            enc2, P2, ans2 = build(proc, im, f"{r['gt']:.1f}", dev); out2 = model(**enc2)
+            enc2, P2, ans2 = build(proc, im, f"{trunc1(r['gt']):.1f}", dev); out2 = model(**enc2)
             lg2 = out2.logits[0, P2 - 1: P2 - 1 + len(ans2)].float()
             loss = (1.0 - args.gt_lambda) * loss + args.gt_lambda * torch.nn.functional.cross_entropy(lg2, torch.tensor(ans2, device=dev))
         (loss / args.accum).backward(); run += loss.item(); nrun += 1
