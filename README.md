@@ -142,7 +142,7 @@ dropped from the grid for now (re-added later by the fixed rule if needed).
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
 | | | | teacher | 0.809 / 0.143 | 0.881 / 0.125 |
-| | | | student zero-shot | — | — |
+| | | | student zero-shot | 0.054 / 0.592 | 0.060 / 0.566 |
 
 ### Driving pool — evaluated on DDAD, nuScenes (mini)
 
@@ -185,7 +185,7 @@ dropped from the grid for now (re-added later by the fixed rule if needed).
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
 | | | | teacher | 0.653 / 0.240 | 0.728 / 0.601 |
-| | | | student zero-shot | — | — |
+| | | | student zero-shot | 0.114 / 2.662 | 0.112 / 5.428 |
 
 ### Mixed pool (indoor 50 / driving 50) — evaluated on all four sets
 
@@ -228,7 +228,7 @@ dropped from the grid for now (re-added later by the fixed rule if needed).
 | | | | gt+soft † | — | — | — | — |
 | | | | gt+hard † | — | — | — | — |
 | | | | teacher | 0.809 / 0.143 | 0.881 / 0.125 | 0.653 / 0.240 | 0.728 / 0.601 |
-| | | | student zero-shot | — | — | — | — |
+| | | | student zero-shot | 0.054 / 0.592 | 0.060 / 0.566 | 0.114 / 2.662 | 0.112 / 5.428 |
 
 ### Noise floor — B = 400 (δ1 spread per set, `33_noise_floor.py`)
 
