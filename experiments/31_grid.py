@@ -10,11 +10,13 @@ import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0, ROOT)
 from depthlm_uncertainty.eval_clusters import boot_ci, clusters   # DDAD·nuScenes 는 장면, 나머지는 사진 단위 (NOTES D-24)
 NAMES = {"ibims1": "iBims-1", "nyuv2": "NYUv2", "ddad": "DDAD", "nuscenes": "nuScenes", "eth3d": "ETH3D (held-out)"}
-ap = argparse.ArgumentParser(); ap.add_argument("--cond", default="soft"); ap.add_argument("--eval_set", default="small", choices=["small", "large"]); ap.add_argument("--suffix", default="", help="태그 접미사 (예: _f500)"); ap.add_argument("--arms", default="pools/mixed/arms.json"); ap.add_argument("--datasets", default=",".join(NAMES), help="쉼표 구분, 표에 넣을 평가 세트 (있는 것만)"); args = ap.parse_args()
+ap = argparse.ArgumentParser(); ap.add_argument("--cond", default="soft"); ap.add_argument("--eval_set", default="large", choices=["small", "large"]); ap.add_argument("--suffix", default="", help="태그 접미사 (예: _f500)"); ap.add_argument("--arms", default="pools/mixed/cells_v3.json", help="cells_v3.json (v3, B 키) — 옛 arms.json (budget 키)도 읽힌다"); ap.add_argument("--datasets", default=",".join(NAMES), help="쉼표 구분, 표에 넣을 평가 세트 (있는 것만)"); args = ap.parse_args()
 NAMES = {k: v for k, v in NAMES.items() if k in args.datasets.split(",")}
 OUT = os.environ.get("OUT_ROOT", "results")
 suf = "_large" if args.eval_set == "large" else ""
 cells = json.load(open(os.path.join(ROOT, args.arms)))["cells"]
+for c in cells: c["budget"] = c.get("budget", c.get("B"))   # v3: budget = B
+TAG = {(c["N"], c["k"]): c["tag"] for c in cells}           # (N,k) → 태그 (v3 는 B{B}_k{k}, 옛 격자는 N{N}_k{k})
 def hit(p, g): p, g = np.asarray(p, float), np.asarray(g, float); return (np.maximum(p / g, g / p) < 1.25).astype(float)
 def load(tag):   # 예전 한 파일(eval_<tag>[_large].parquet)과 데이터셋별 파일(eval_<tag>[_large]__<name>.parquet)을 모두 읽는다
     b = os.path.join(ROOT, f"{OUT}/eval/eval_{args.cond}_{tag}{args.suffix}{suf}")
@@ -45,15 +47,15 @@ for ds in NAMES:
             for j in range(i + 1, len(cs)):
                 r = paired(cs[j]["tag"], cs[i]["tag"], ds)     # 많은 이미지 − 적은 이미지
                 if r: comp.append({"비교": f"예산 {b}: N{cs[j]['N']}k{cs[j]['k']} − N{cs[i]['N']}k{cs[i]['k']}", "종류": "고정 예산 배분", "dataset": NAMES[ds], "Δδ1": f"{r[0]:+.3f} [{r[1]:+.3f}, {r[2]:+.3f}]", "n": r[3]})
-    for N in sorted({c["N"] for c in have}):           # (b) 같은 행
+    for N in sorted({c["N"] for c in have}):           # (b) N 고정 (v3 격자에서는 대각선): 라벨 밀도 한계효용
         ks = sorted(c["k"] for c in have if c["N"] == N)
         for i in range(len(ks) - 1):
-            r = paired(f"N{N}_k{ks[i+1]}", f"N{N}_k{ks[i]}", ds)
+            r = paired(TAG[(N, ks[i+1])], TAG[(N, ks[i])], ds)
             if r: comp.append({"비교": f"N={N} 고정: k {ks[i]}→{ks[i+1]}", "종류": "라벨 밀도 한계효용", "dataset": NAMES[ds], "Δδ1": f"{r[0]:+.3f} [{r[1]:+.3f}, {r[2]:+.3f}]", "n": r[3]})
-    for k in sorted({c["k"] for c in have}):           # (c) 같은 열
+    for k in sorted({c["k"] for c in have}):           # (c) k 고정 (같은 열): 이미지 수 한계효용
         Ns = sorted(c["N"] for c in have if c["k"] == k)
         for i in range(len(Ns) - 1):
-            r = paired(f"N{Ns[i+1]}_k{k}", f"N{Ns[i]}_k{k}", ds)
+            r = paired(TAG[(Ns[i+1], k)], TAG[(Ns[i], k)], ds)
             if r: comp.append({"비교": f"k={k} 고정: N {Ns[i]}→{Ns[i+1]}", "종류": "이미지 수 한계효용", "dataset": NAMES[ds], "Δδ1": f"{r[0]:+.3f} [{r[1]:+.3f}, {r[2]:+.3f}]", "n": r[3]})
 comp_df = pd.DataFrame(comp)
 md = (f"## Grid: images N × pixels-per-image k (loss {args.cond}, eval_set {args.eval_set}, 2 epochs, nested pool)\n\n"

@@ -34,7 +34,8 @@ def decode(model, tok, inputs, max_steps=8):
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--adapter", default=""); ap.add_argument("--tag", required=True); ap.add_argument("--device", default="cuda:0"); ap.add_argument("--limit_img", type=int, default=0, help="스모크용: 데이터셋당 이미지 수"); ap.add_argument("--per_max", type=int, default=0, help="스모크용: 이미지당 픽셀 상한"); ap.add_argument("--decimals", type=int, default=1, choices=[1, 2]); ap.add_argument("--focal", type=float, default=750.0); ap.add_argument("--eval_set", default="small", choices=["small", "large"], help="small = ref/tree_px (300/320/302), large = ref/dist_* 전체 (3,000/2,000/4,503)")
-    ap.add_argument("--datasets", default=",".join(LEGACY), help="쉼표 구분. 기본값(ibims1,nyuv2,eth3d)이면 예전처럼 eval_<tag>[_large].parquet 한 파일, 아니면 데이터셋마다 eval_<tag>[_large]__<name>.parquet (있으면 건너뜀)"); args = ap.parse_args()
+    ap.add_argument("--datasets", default=",".join(LEGACY), help="쉼표 구분. 기본값(ibims1,nyuv2,eth3d)이면 예전처럼 eval_<tag>[_large].parquet 한 파일, 아니면 데이터셋마다 eval_<tag>[_large]__<name>.parquet (있으면 건너뜀)")
+    ap.add_argument("--greedy_only", action="store_true", help="greedy 복호만 (분포 트리·CoV 생략, ≈6배 저렴) — 반복 셀·추가 시드의 산포 추정용 (V-3)"); args = ap.parse_args()
     dev = args.device; is_cuda = dev.startswith("cuda")
     proc = AutoProcessor.from_pretrained(MODEL); tok = proc.tokenizer
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(MODEL, dtype=torch.bfloat16, attn_implementation="sdpa", device_map=dev)
@@ -64,8 +65,9 @@ def main():
             enc = proc.apply_chat_template([msgs], add_generation_prompt=True, tokenize=True, return_dict=True, return_tensors="pt")
             inputs = {k: (torch.as_tensor(v).to(dev, dtype=torch.bfloat16) if k == "pixel_values" else torch.as_tensor(v).to(dev, dtype=torch.long)) for k, v in enc.items()}
             is_cuda and torch.cuda.synchronize(); t1 = time.time(); val = decode(model, tok, inputs); is_cuda and torch.cuda.synchronize(); t_dec = time.time() - t1
-            nd = enumerate_number_distribution(model, tok, inputs, torch.tensor([], dtype=torch.long), min_branch_p=0.005, chunk=chunk, stop_first_decimal=(args.decimals == 1), max_depth=6)
-            rows.append({"dataset": name, "image_id": s.image_id, "pixel_index": j, "gt": s.depth_gt, "pred": val, "pred_mid": (val + 0.5 * 10 ** (-args.decimals)) if val == val else val, "cov": nd.stats()["dist_cov"], "ev": nd.expected_value(), "mass": nd.covered_mass, "sec_decode": t_dec}); n += 1; del inputs
+            nd = None if args.greedy_only else enumerate_number_distribution(model, tok, inputs, torch.tensor([], dtype=torch.long), min_branch_p=0.005, chunk=chunk, stop_first_decimal=(args.decimals == 1), max_depth=6)
+            rows.append({"dataset": name, "image_id": s.image_id, "pixel_index": j, "gt": s.depth_gt, "pred": val, "pred_mid": (val + 0.5 * 10 ** (-args.decimals)) if val == val else val,
+                         "cov": np.nan if nd is None else nd.stats()["dist_cov"], "ev": np.nan if nd is None else nd.expected_value(), "mass": np.nan if nd is None else nd.covered_mass, "sec_decode": t_dec}); n += 1; del inputs
         print(f"{name}: {n} px, {(time.time()-t0)/max(n,1):.2f} s/px", flush=True)
         if not legacy_out: pd.DataFrame(rows[n0:]).to_parquet(per, index=False)   # 데이터셋이 끝날 때마다 저장 (중간에 끊겨도 끝난 세트는 남는다)
     d = pd.DataFrame(rows)
@@ -73,8 +75,11 @@ def main():
     if not len(d): print("평가한 픽셀 없음", flush=True); return
     for name, g in d.groupby("dataset"):
         ok = g[g.pred.notna() & (g.pred > 0)]; gt = ok["gt"].values; p = ok.pred_mid.values; err = np.abs(p - gt) / gt; fail = (np.maximum(p / gt, gt / p) >= 1.25).astype(int)
-        a = compute_aucs(gt, p, ok["cov"].values, metrics=("abs_rel",))["abs_rel"]["ause"]; auc = roc_auc_score(fail, ok["cov"].values) if fail.min() != fail.max() else np.nan
-        print(f"[{args.tag}] {name}: n={len(ok)} 파싱 {len(ok)/len(g)*100:.1f}%  δ₁ {np.mean(fail == 0):.3f}  AbsRel {err.mean():.3f}  | CoV AUSE {a:.4f} AUC {auc:.3f} | decode {ok.sec_decode.mean():.3f} s/px  VRAM {(torch.cuda.max_memory_allocated()/1e9 if is_cuda else 0):.1f} GB", flush=True)
+        if ok["cov"].notna().any():
+            a = compute_aucs(gt, p, ok["cov"].values, metrics=("abs_rel",))["abs_rel"]["ause"]; auc = roc_auc_score(fail, ok["cov"].values) if fail.min() != fail.max() else np.nan
+            uq = f"| CoV AUSE {a:.4f} AUC {auc:.3f} "
+        else: uq = "| greedy-only "
+        print(f"[{args.tag}] {name}: n={len(ok)} 파싱 {len(ok)/len(g)*100:.1f}%  δ₁ {np.mean(fail == 0):.3f}  AbsRel {err.mean():.3f}  {uq}| decode {ok.sec_decode.mean():.3f} s/px  VRAM {(torch.cuda.max_memory_allocated()/1e9 if is_cuda else 0):.1f} GB", flush=True)
 
 if __name__ == "__main__":
     main()

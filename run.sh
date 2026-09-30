@@ -5,11 +5,13 @@
 #   MODE=smoke                       bash run.sh        # 파이프라인 검증 (모델 다운로드 → 30 스텝 학습 → 3 px 평가)
 # 권장: 세 단계를 따로 요청한다 (한 작업에 몰면 24 시간을 넘기고, 중간에 죽으면 어디까지 됐는지 알기 어렵다)
 #   MODE=label POOL=mixed            bash run.sh        # ① 교사 추론 = 라벨링          → /app/output/labels/<pool>/teacher_labels.parquet
-#   MODE=train POOL=mixed COND=soft  bash run.sh        # ② 학생 학습 8셀               → /app/output/checkpoints/
-#   MODE=eval  POOL=mixed COND=soft  bash run.sh        # ③ 평가(small+large) → 표·그림·zip
-#   MODE=grid  POOL=mixed COND=soft  bash run.sh        # ②+③ 을 한 작업에 (이전 방식, 호환용)
-# 환경변수: DATA_ROOT(데이터 루트, 기본 ./data), OUT_ROOT(결과, 기본 ./results), FOCAL(750), CELLS(기본 arms.json 전체), EVAL_SETS(기본 large, none = 평가 안 함), EVAL_DATASETS(기본 풀별),
-#           HF_TOKEN(gated 모델용), NPROC(병렬 학습 프로세스 수, MIG 슬라이스 격리 시 CUDA_VISIBLE_DEVICES 로 분배)
+#   MODE=train POOL=indoor COND=soft bash run.sh        # ② 학생 학습 (v3: CELLS×SEEDS + REPLICATES) → /app/output/checkpoints/
+#   MODE=eval  POOL=indoor COND=soft bash run.sh        # ③ 평가(large) → 표·그림·zip. 시드>0·반복 셀은 greedy 전용
+#   MODE=grid  POOL=indoor COND=soft bash run.sh        # ②+③ 을 한 작업에 (권장: 예산 행 하나씩 — 예 CELLS="B400_k1 B400_k4 B400_k16")
+# v3 격자 (paper/design_v3_corrections.md C-2): 셀 = cells_v3.json 의 (B,k) 9개, COND ∈ soft|hard|gthard|gtsoft (†arm 은 λ=0.1 GT 합산)
+# 환경변수: DATA_ROOT(데이터 루트, 기본 ./data), OUT_ROOT(결과, 기본 ./results), FOCAL(750), CELLS(기본 cells_v3.json 전체 — 예산 행 하나만: "B400_k1 B400_k4 B400_k16"),
+#           SEEDS(기본 "0", B=400 행은 "0 1 2" 권장 — 시드>0 은 태그 _s<seed>, greedy 전용 평가), REPLICATES(1 = B400 반복 셀 12개도 학습·greedy 평가 — soft/hard 만),
+#           EVAL_SETS(기본 large, none = 평가 안 함), EVAL_DATASETS(기본 풀별), HF_TOKEN(gated 모델용), NPROC(병렬 학습 프로세스 수)
 set -euo pipefail; cd "$(dirname "$0")"; export PYTHONUNBUFFERED=1
 # 규칙: /app/output 은 결과 전용이다. 압축 해제본·모델 캐시·임시 파일은 절대 여기에 두지 않는다 (2026-09-27 output 100 GB 초과로 실험이 강제 종료된 원인)
 writable() { [ -d "$1" ] || return 1; touch "$1/.h200_write_test" 2>/dev/null || return 1; rm -f "$1/.h200_write_test" 2>/dev/null || true; return 0; }
@@ -324,9 +326,9 @@ print(f"[label] 내려받을 파일: {dst}  {os.path.getsize(dst)/1e6:.1f} MB")
 PYZ
   say "[label] 다음 작업으로 요청할 것 →  bash run.sh train $POOL soft"; exit 0
 fi
-# --- train / eval / grid ---  태그 = <cond>_<cell>_<pool>_f<focal>  (풀이 달라도 체크포인트·평가 파일이 겹치지 않음)
-# train = 학습 8셀만, eval = 평가+표+zip 만, grid = 둘 다(호환용). 학습과 평가를 따로 요청하면 한 작업이 12 시간대로 끝나고 어디까지 됐는지 분명해진다
-SUFFIX=_${POOL}_f${FOCAL}; ARMS=pools/$POOL/arms.json; PCFG=configs/pool_${POOL}.yaml
+# --- train / eval / grid ---  태그 = <cond>_<cell>[_s<seed>]_<pool>_f<focal>  (풀이 달라도 체크포인트·평가 파일이 겹치지 않음)
+# 단위 = 셀×시드 (+반복 셀). 시드 0 = 본 셀(전체 평가), 시드>0·반복 셀 = greedy 전용 평가 (V-2·V-3)
+SUFFIX=_${POOL}_f${FOCAL}; ARMS=pools/$POOL/cells_v3.json; PCFG=configs/pool_${POOL}.yaml
 # 풀마다 판정에 쓰는 평가 세트만 평가한다 (실내 → iBims-1·NYUv2, 주행 → DDAD·nuScenes, 혼합 → 넷 다). EVAL_DATASETS 로 바꿀 수 있다
 case $POOL in indoor) DEF_DS="ibims1 nyuv2";; outdoor) DEF_DS="ddad nuscenes";; *) DEF_DS="ibims1 nyuv2 ddad nuscenes";; esac; EVAL_DATASETS=${EVAL_DATASETS:-$DEF_DS}
 # 교사 라벨 탐색 순서: ① 이 파드의 결과 ② /app/data 에 남긴 영속 사본 (파드 사이에 /app/output 이 안 넘어와도 살아남음) ③ 저장소에 커밋된 라벨
@@ -342,7 +344,21 @@ else
   { [ "$MODE" = train ] || [ -d "$DATA_ROOT/eval" ]; } || { say "!!! DATA_ROOT 에 eval/ 없음 → bash run.sh data 먼저"; exit 1; }
 fi
 CELLS=${CELLS:-$(python -c "import json;print(' '.join(c['tag'] for c in json.load(open('$ARMS'))['cells']))")}
-say "[$MODE] 풀 $POOL 조건 $COND 라벨 $LABELS 셀: $CELLS"
+# 실행 단위 목록: "행파일;태그;시드;greedy(0/1)". 반복 셀은 soft/hard 에서만 (†arm 은 참조라 반복 불필요, V-3)
+UNITS=$(CELLS="$CELLS" SEEDS="${SEEDS:-0}" REPLICATES="${REPLICATES:-0}" COND="$COND" python - "$ARMS" <<'PYU'
+import json, os, sys
+arms = json.load(open(sys.argv[1])); want = os.environ["CELLS"].split()
+out = []
+for c in arms["cells"]:
+    if c["tag"] not in want: continue
+    for s in os.environ["SEEDS"].split():
+        out.append(f"{c['rows']};{c['tag']}{'' if s == '0' else '_s' + s};{s};{'0' if s == '0' else '1'}")
+if os.environ["REPLICATES"] == "1" and os.environ["COND"] in ("soft", "hard"):
+    out += [f"{r}.parquet;{r};0;1" for r in arms.get("replicates", [])]
+print(" ".join(out))
+PYU
+)
+say "[$MODE] 풀 $POOL 조건 $COND 라벨 $LABELS 셀: $CELLS | 시드: ${SEEDS:-0} | 반복: ${REPLICATES:-0} → 단위 $(echo $UNITS | wc -w)개"
 if [ "$MODE" != eval ]; then   # 라벨 커버리지 확인 (평가는 라벨을 쓰지 않으므로 건너뜀)
 CRC=0; python - "$LABELS" "$POOL" > "$OUT_ROOT/coverage_${POOL}.txt" 2>&1 <<'PYC' || CRC=$?
 import sys, glob, pandas as pd; lab, pool = sys.argv[1:3]
@@ -352,19 +368,20 @@ print(f"[grid] 라벨 커버리지: 필요 {len(need)} px, 부족 {miss} px"); s
 PYC
 cat "$OUT_ROOT/coverage_${POOL}.txt" | tee -a "$LOG"; rm -f "$OUT_ROOT/coverage_${POOL}.txt"; [ "$CRC" = 0 ] || { say "!!! 라벨 부족 → bash run.sh label $POOL 먼저"; exit 1; }
 fi
-train_cell() { local cell=$1; local ad=$OUT_ROOT/checkpoints/${COND}_${cell}${SUFFIX}
-  [ -f "$ad/adapter_model.safetensors" ] && { say "$cell 학습 완료됨 — 건너뜀"; return 0; }
-  say "학습 $COND $cell"; python -u experiments/20_train_student.py --cond "$COND" --epochs 2 --accum 8 --focal "$FOCAL" --labels "$LABELS" --pools "$PCFG" --rows "pools/$POOL/rows_$cell.parquet" --tag "_${cell}${SUFFIX}" > "$OUT_ROOT/train_${COND}_${cell}${SUFFIX}.log" 2>&1 || say "!!! 학습 실패 $cell"; }
-eval_cell() { local cell=$1; local ad=$OUT_ROOT/checkpoints/${COND}_${cell}${SUFFIX}; [ -f "$ad/adapter_model.safetensors" ] || return 0; [ -n "$EVAL_DATASETS" ] || return 0
+train_cell() { local rows tag seed greedy; IFS=';' read -r rows tag seed greedy <<< "$1"; local ad=$OUT_ROOT/checkpoints/${COND}_${tag}${SUFFIX}
+  [ -f "$ad/adapter_model.safetensors" ] && { say "$tag 학습 완료됨 — 건너뜀"; return 0; }
+  say "학습 $COND $tag (시드 $seed)"; python -u experiments/20_train_student.py --cond "$COND" --epochs 2 --accum 8 --focal "$FOCAL" --seed "$seed" --labels "$LABELS" --pools "$PCFG" --rows "pools/$POOL/$rows" --tag "_${tag}${SUFFIX}" > "$OUT_ROOT/train_${COND}_${tag}${SUFFIX}.log" 2>&1 || say "!!! 학습 실패 $tag"; }
+eval_cell() { local rows tag seed greedy; IFS=';' read -r rows tag seed greedy <<< "$1"; local ad=$OUT_ROOT/checkpoints/${COND}_${tag}${SUFFIX}; [ -f "$ad/adapter_model.safetensors" ] || return 0; [ -n "$EVAL_DATASETS" ] || return 0
+  local gflag=""; [ "$greedy" = 1 ] && gflag="--greedy_only"   # 시드>0·반복 셀: 산포 추정용 greedy 전용 (V-3)
   for es in $EVAL_SETS; do [ "$es" = none ] && continue; local suf="" todo="" ds; [ "$es" = large ] && suf=_large
-    local base=$OUT_ROOT/eval/eval_${COND}_${cell}${SUFFIX}${suf}   # 데이터셋별 파일 <base>__<ds>.parquet, 예전 한 파일 <base>.parquet 는 ibims1·nyuv2·eth3d 를 담는다
+    local base=$OUT_ROOT/eval/eval_${COND}_${tag}${SUFFIX}${suf}   # 데이터셋별 파일 <base>__<ds>.parquet, 예전 한 파일 <base>.parquet 는 ibims1·nyuv2·eth3d 를 담는다
     for ds in $EVAL_DATASETS; do [ -f "${base}__${ds}.parquet" ] && continue; [ -f "${base}.parquet" ] && case $ds in ibims1|nyuv2|eth3d) continue;; esac; todo="$todo,$ds"; done
     [ -n "$todo" ] || continue
-    say "평가 $COND $cell ($es: ${todo#,})"; python -u experiments/21_eval_student.py --tag "${COND}_${cell}${SUFFIX}" --adapter "$ad" --focal "$FOCAL" --eval_set "$es" --datasets "${todo#,}" ${EVAL_EXTRA:-} >> "$OUT_ROOT/eval_${COND}_${cell}${SUFFIX}_${es}.log" 2>&1 || say "!!! 평가 실패 $cell $es"; done; }
-run_cells() { local fn=$1; if [ "$NPROC_TRAIN" -gt 1 ]; then   # GPU 한 장 통째: 셀 NPROC_TRAIN 개를 같은 GPU 에서 동시에 (학습 ≈10 GB, 평가 ≈8 GB)
-    local i=0; for cell in $CELLS; do if [ "$NDEV" -gt 1 ]; then CUDA_VISIBLE_DEVICES=${DEVS[$((i % NDEV))]} $fn "$cell" & else $fn "$cell" & fi; i=$((i+1)); [ $((i % NPROC_TRAIN)) -eq 0 ] && wait; done; wait
-  else for cell in $CELLS; do $fn "$cell"; done; fi; }
-NCELL=$(echo $CELLS | wc -w)
+    say "평가 $COND $tag ($es: ${todo#,}${gflag:+, greedy})"; python -u experiments/21_eval_student.py --tag "${COND}_${tag}${SUFFIX}" --adapter "$ad" --focal "$FOCAL" --eval_set "$es" --datasets "${todo#,}" $gflag ${EVAL_EXTRA:-} >> "$OUT_ROOT/eval_${COND}_${tag}${SUFFIX}_${es}.log" 2>&1 || say "!!! 평가 실패 $tag $es"; done; }
+run_cells() { local fn=$1; if [ "$NPROC_TRAIN" -gt 1 ]; then   # GPU 한 장 통째: 단위 NPROC_TRAIN 개를 같은 GPU 에서 동시에 (학습 ≈10 GB, 평가 ≈8 GB)
+    local i=0; for u in $UNITS; do if [ "$NDEV" -gt 1 ]; then CUDA_VISIBLE_DEVICES=${DEVS[$((i % NDEV))]} $fn "$u" & else $fn "$u" & fi; i=$((i+1)); [ $((i % NPROC_TRAIN)) -eq 0 ] && wait; done; wait
+  else for u in $UNITS; do $fn "$u"; done; fi; }
+NCELL=$(echo $UNITS | wc -w)
 if [ "$MODE" != train ]; then   # 주행 평가 세트(DDAD·nuScenes)는 30 GB 아카이브 밖의 별도 묶음(drive_eval, 550 MB)이다. /app/data 아래에 풀려 있거나 zip 으로 있으면 $DATA_ROOT/eval 에 연결한다
   for ds in $EVAL_DATASETS; do case $ds in ddad|nuscenes) ;; *) continue;; esac; [ -f "$DATA_ROOT/eval/$ds/${ds}_val.jsonl" ] && continue
     DE=""; for d in /app/data "$DATA_SRC" "$WORK_ROOT/drive_eval"; do [ -d "$d" ] && [ -z "$DE" ] && DE=$(find -L "$d" -maxdepth 5 -name "${ds}_val.jsonl" -path "*/$ds/*" -printf "%h\n" 2>/dev/null | head -1 || true); done
@@ -408,18 +425,18 @@ if [ "$MODE" != train ]; then   # 이 환경에 없는 평가 세트는 건너�
   say "[eval] 평가 세트: ${EVAL_DATASETS:-없음 → 학습과 결과 zip(어댑터 포함)만} | 세트 종류: $EVAL_SETS"; fi
 case $MODE in
   train) run_cells train_cell
-         say "[train] 완료 $POOL $COND — 셀별 어댑터:"
-         NOK=0; for c in $CELLS; do if [ -f "$OUT_ROOT/checkpoints/${COND}_${c}${SUFFIX}/adapter_model.safetensors" ]; then NOK=$((NOK+1)); say "  $c  OK"; else say "  $c  !!! 실패 → $OUT_ROOT/train_${COND}_${c}${SUFFIX}.log 확인"; fi; done
-         say "[train] $NOK/$NCELL 셀 성공. 어댑터: $OUT_ROOT/checkpoints/${COND}_*${SUFFIX}"
+         say "[train] 완료 $POOL $COND — 단위별 어댑터:"
+         NOK=0; for u in $UNITS; do t=$(echo "$u" | cut -d';' -f2); if [ -f "$OUT_ROOT/checkpoints/${COND}_${t}${SUFFIX}/adapter_model.safetensors" ]; then NOK=$((NOK+1)); say "  $t  OK"; else say "  $t  !!! 실패 → $OUT_ROOT/train_${COND}_${t}${SUFFIX}.log 확인"; fi; done
+         say "[train] $NOK/$NCELL 단위 성공. 어댑터: $OUT_ROOT/checkpoints/${COND}_*${SUFFIX}"
          say "[train] 다음 단계는 bash run.sh eval $POOL $COND — 단, 어댑터가 $OUT_ROOT 에 남아 있어야 한다"
          say "[train] 결과 볼륨이 작업 사이에 비워지는 환경(사업단 H200, 2026-09-28 실측)이면 eval 이 어댑터를 못 찾는다. 그 경우 학습과 평가를 한 작업으로 도는 bash run.sh grid $POOL $COND 를 쓸 것"
          [ "$NOK" -gt 0 ] || exit 1
          exit 0;;
-  eval)  NAD=0; for c in $CELLS; do [ -f "$OUT_ROOT/checkpoints/${COND}_${c}${SUFFIX}/adapter_model.safetensors" ] && NAD=$((NAD+1)) || true; done
+  eval)  NAD=0; for u in $UNITS; do t=$(echo "$u" | cut -d';' -f2); [ -f "$OUT_ROOT/checkpoints/${COND}_${t}${SUFFIX}/adapter_model.safetensors" ] && NAD=$((NAD+1)) || true; done
          [ "$NAD" -gt 0 ] || { say "!!! [eval] $OUT_ROOT/checkpoints 에 ${COND}_*${SUFFIX} 어댑터가 없다"
            say "!!! → 같은 파드에서 학습했다면 bash run.sh train $POOL $COND 먼저"
            say "!!! → 결과 볼륨이 작업 사이에 비워지는 환경이면 학습 결과가 넘어오지 않는다. bash run.sh grid $POOL $COND 로 학습과 평가를 한 작업에 돌릴 것"; exit 1; }
-         say "[eval] 학습된 어댑터 $NAD/$NCELL 셀"; run_cells eval_cell;;
+         say "[eval] 학습된 어댑터 $NAD/$NCELL 단위"; run_cells eval_cell;;
   *)     run_cells train_cell; run_cells eval_cell;;
 esac
 for es in $EVAL_SETS; do [ "$es" = none ] || [ -z "$EVAL_DATASETS" ] && continue; python experiments/31_grid.py --cond "$COND" --suffix "$SUFFIX" --eval_set "$es" --arms "$ARMS" --datasets "$(echo $EVAL_DATASETS | tr ' ' ',')" >> "$LOG" 2>&1 || say "!!! 표 실패 $es"; done

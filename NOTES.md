@@ -8,15 +8,16 @@
 - [x] 저장소 등록: 옛 저장소에서 필요한 것만 복사 (풀 v5·교사 라벨·라이브러리·실험 코드·공식 유틸·ref) — 2026-09-30
 - [x] `03_build_cells_v3.py`: (B,k) 격자 9+2셀 + 반복 12셀 생성, 3개 풀 모두 **새 교사 질의 0 검증** — 2026-09-30
 - [x] README 에 채울 격자 스켈레톤 생성 (3풀 × soft/hard 22행 + teacher·zero-shot 베이스라인 + 잡음 바닥 표 + 부수 실험 표 + 진행 순서) — 2026-09-30, 커밋 76c4ce2
-- [ ] `31_grid.py`·`32_decide.py` 등예산 비교 목록을 v3 행 단위(각 B 의 k arm 쌍)로 갱신
-- [ ] 풀 픽셀 GT 추출 스크립트 (SUN RGB-D·NYUv2·KITTI 깊이맵 → 라벨 parquet gt 열, 커버리지 풀별 보고) — gt+pseudo 선행 조건 (V-3)
-- [ ] `20_train_student.py` 에 gt+hard·gt+soft 조건 추가 (L = (1−λ)·L_pseudo + λ·L_gt, λ = 0.1, GT 있는 행만 L_gt)
-- [ ] `21_eval_student.py` 에 greedy 전용 플래그 (반복 셀·추가 시드용, V-3)
-- [ ] 반복 셀 학습·집계 스크립트 (잡음 바닥 보고 전용, 본 격자와 분리)
-- [ ] indoor B=400 행(soft/hard/gt+pseudo + 반복)부터 H200 제출 — 시드 ≥3(soft/hard)
+- [x] `31_grid.py`·`32_decide.py` v3 갱신 — cells_v3.json 읽기, 각 예산 행 3쌍 배분 비교 + 9셀 손실 비교, `--floor` 잡음 바닥 게이트 — 2026-09-30
+- [x] `04_extract_gt.py` 풀 픽셀 GT 추출 + 교사 대조 검증 (V-5: SUN RGB-D 스케일 수정 포함) — 2026-09-30
+- [x] `20_train_student.py` 에 gthard·gtsoft 조건 (L = (1−λ)·L_pseudo + λ·CE(GT), λ=0.1, GT 있는 행만) — 2026-09-30
+- [x] `21_eval_student.py` `--greedy_only` (반복 셀·추가 시드용, 트리 생략) — 2026-09-30
+- [x] `33_noise_floor.py` 반복 셀 집계 → noise_floor_<pool>.json (32_decide --floor 입력) — 2026-09-30
+- [x] `run.sh` v3 갱신 — cells_v3.json, 단위 = 셀×SEEDS(+REPLICATES 반복 셀), 시드>0·반복은 greedy 전용 평가 — 2026-09-30
+- [x] 스모크: gtsoft·gthard GPU 학습, `--greedy_only` 평가, `bash run.sh smoke` 전체 파이프라인(30스텝+3px, 파싱 100 %) — 2026-09-30
+- [ ] indoor B=400 행부터 H200 제출 (A1: soft SEEDS="0 1 2" REPLICATES=1 / A2: hard 동일 / A3: gtsoft / A4: gthard)
 - [ ] W1 파일럿: 값 공간(log-depth) 수식·대상 셀 확정 → 한 셀 실행
 - [ ] hard 1자리 vs 2자리 ablation: 부분집합 2자리 재라벨(teacher_full) → `--decimals 2` 비교
-- [ ] `run.sh` 를 cells_v3.json 기준으로 갱신 (그 전에는 사용 금지)
 - [ ] 레시피-혼합: per-row 조건 학습 코드 (게이트: 도메인 격자 주장 ≥1건)
 
 ## 결정 기록
@@ -51,7 +52,24 @@
 - **B=25,600 삭제**: deferred 가 아니라 격자에서 제거. `03_build_cells_v3.py` 에서 확장 제거 후 3개 풀 재생성(본 9셀,
   새 질의 0 재확인), rows_B25600_* 삭제. 필요해지면 C-2 고정 규칙으로 재추가.
 
+### V-5 (2026-09-30) GT 추출 실행·검증 — SUN RGB-D 스케일 수정, 주행 커버리지 4.3 % 한계
+- `04_extract_gt.py` 로 세 풀의 라벨 parquet gt 열을 채움. **커버리지**: indoor 37,423/44,800 (84 %), mixed 20,001 (45 %),
+  outdoor **1,928 (4.3 %)** — kitti_raw(주행 풀의 71 %)는 velodyne 투영 미구현으로 GT 0, 나머지 KITTI 도 희소(11–17 %).
+  → **주행 풀의 † arm 은 GT 신호가 행의 4 %뿐**이라 순수 arm 과 사실상 같을 수 있음을 보고서에 명시할 것.
+- **검증(교사 라벨 대조)이 스케일 오류를 잡음**: 공식 curate_sunRGBD.py 의 /10000 으로 추출하면 SUN RGB-D 4개 서브셋 모두
+  log(교사/GT) ≈ +0.20 (=1.25배, δ1 0.53–0.63) — 툴박스 규약(bitshift(v,−3)|bitshift(v,13) 후 /1000 = /8000 상당)과의 비율과 일치.
+  툴박스 규약으로 수정 후 δ1 0.81–0.90, 편향 −0.02~−0.06 — NYUv2(0.875, −0.03)와 정합. **공식 저장소 코드가 항상 옳지는 않다.**
+- KITTI 의 −0.17~−0.20 은 직접 깊이(dsel)와 disparity 변환(2012/2015)에서 동일 → 스케일이 아니라 교사의 원거리 과소예측(D-75·D-76 과 일치).
+- 근사 기록: KITTI 2012/2015 depth = fx·0.54/disp (표준 기선, 프레임별 calib 미사용), GT 는 _10 프레임만. λ·규약은 gt_coverage.md 와 docstring 에.
+
 ## 실행 로그
 
-- 2026-09-30: `03_build_cells_v3.py --pool {mixed,indoor,outdoor}` — 각 풀 rows_B*_k*.parquet 11개,
-  rep_*.parquet 12개, cells_v3.json 저장. "기존 라벨 밖 0" 전 셀 확인.
+- 2026-09-30: `03_build_cells_v3.py --pool {mixed,indoor,outdoor}` — 각 풀 rows_B*_k*.parquet (25,600 삭제 후 9개),
+  rep_*.parquet 12개, cells_v3.json 저장. "기존 라벨 밖 0" 전 셀 확인 (V-4 재생성 포함).
+- 2026-09-30: `04_extract_gt.py` 3개 풀 실행 — 커버리지 indoor 84 % / mixed 45 % / outdoor 4.3 %.
+  교사 대조 검증으로 SUN RGB-D 스케일 오류 발견·수정 (V-5): 수정 후 SUN RGB-D 교사 δ1 0.81–0.90 (편향 −0.02~−0.06).
+- 2026-09-30: v3 선행 구현 스모크 (로컬 GPU, 사용자 GPU 비움) —
+  `20_train --cond gtsoft --steps 6` loss 1.458 저장 OK / `--cond gthard --steps 4` loss 2.060 OK
+  (GT 있는 행 2 + 없는 행 1 로 두 경로 모두 통과; `r.gt`→`r["gt"]` pandas 메서드 충돌 버그 수정, 기존 gt 조건에도 있던 잠재 버그).
+  `21_eval --greedy_only` 3세트 × 2px OK — greedy 복호 0.15–0.38 s/px (트리 포함 ≈1.5 s/px 대비 ≈6배 저렴, V-3 가정 실측 확인).
+  run.sh v3: bash -n OK, UNITS 생성 검증 (B=400 행 + SEEDS "0 1 2" + REPLICATES=1 → 21단위).

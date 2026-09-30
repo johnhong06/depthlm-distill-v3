@@ -1,8 +1,10 @@
-"""학생(Qwen2.5-VL-3B) LoRA 증류 — 4조건 동등 비교 (D-68/69).
-  A hard : CE(교사 greedy1 문자열 + EOS)
-  B soft : 교사 greedy 경로 위 각 접두사에서 numeric 토큰+종료 분포와의 KL (teacher forcing), 마지막(소수 첫째 자리 뒤)은 EOS 로 CE
-  C wsoft: B × w_i, w_i = clip(1 − cov_i/0.3, 0.2, 1) 을 평균 1 로 정규화 (사전 고정)
-  D gt   : CE(GT 소수 첫째 자리 + EOS), GT 있는 행만 (NYUv2)
+"""학생(Qwen2.5-VL-3B) LoRA 증류 — 조건별 손실 (v3: C-3b·V-4 의 † arm 추가).
+  A hard  : CE(교사 greedy1 문자열 + EOS)
+  B soft  : 교사 greedy 경로 위 각 접두사에서 numeric 토큰+종료 분포와의 KL (teacher forcing), 마지막(소수 첫째 자리 뒤)은 EOS 로 CE
+  C wsoft : B × w_i, w_i = clip(1 − cov_i/0.3, 0.2, 1) 을 평균 1 로 정규화 (사전 고정)
+  D gt    : CE(GT 소수 첫째 자리 + EOS), GT 있는 행만 (참조 상한선)
+  gthard  : GT 있는 행은 (1−λ)·CE(교사 답) + λ·CE(GT), 없는 행은 CE(교사 답). λ = 0.1 (고전 KD [arXiv:1503.02531], V-4)
+  gtsoft  : GT 있는 행은 (1−λ)·KL(교사 분포) + λ·CE(GT), 없는 행은 KL. λ 동일. GT 는 예산 밖 추가 정보 († arm, 절대 규칙 1)
 공통: 같은 행 순서·시드·LoRA(r16, q/k/v/o)·lr 1e-4 cosine·grad accumulation 8·epoch 수. 학생 입력은 DepthLM 마커 이미지 f'=500 + 고정 프롬프트, 출력은 숫자(소수 첫째 자리)+EOS.
 """
 from __future__ import annotations
@@ -46,7 +48,7 @@ def build(proc, im, answer, dev):
     return enc, P, ans_ids
 
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument("--cond", required=True, choices=["hard", "soft", "wsoft", "gt"]); ap.add_argument("--epochs", type=float, default=2); ap.add_argument("--limit", type=int, default=0)
+    ap = argparse.ArgumentParser(); ap.add_argument("--cond", required=True, choices=["hard", "soft", "wsoft", "gt", "gthard", "gtsoft"]); ap.add_argument("--gt_lambda", type=float, default=0.1, help="† arm 의 GT 가중 λ (V-4: 고전 KD 관행값)"); ap.add_argument("--epochs", type=float, default=2); ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--steps", type=int, default=0); ap.add_argument("--accum", type=int, default=8); ap.add_argument("--lr", type=float, default=1e-4); ap.add_argument("--device", default="cuda:0"); ap.add_argument("--out", default=os.environ.get("OUT_ROOT", "results") + "/checkpoints"); ap.add_argument("--seed", type=int, default=0); ap.add_argument("--fp32", action="store_true", help="CPU 테스트용"); ap.add_argument("--labels", nargs="+", default=["pools/mixed/teacher_labels.parquet"]); ap.add_argument("--pools", nargs="+", default=["configs/pool_mixed.yaml"]); ap.add_argument("--rows", default="", help="(image_id, pixel_index) parquet — 이 행만 학습 (예산·배분 arm)"); ap.add_argument("--tag", default=""); ap.add_argument("--focal", type=float, default=750.0, help="학생 입력 정규화 초점거리 (교사=750)"); ap.add_argument("--decimals", type=int, default=1, choices=[1, 2], help="라벨 소수 자릿수 (2 는 --subset 의 teacher_full 사용)"); ap.add_argument("--subset", default="", help="해상도 ablation: 이 parquet 의 (image_id,pixel_index) 행만 사용")
     args = ap.parse_args(); torch.manual_seed(args.seed); random.seed(args.seed); dev = args.device
     global STUDENT_FOCAL; STUDENT_FOCAL = args.focal; print(f"student focal {STUDENT_FOCAL}", flush=True)
@@ -71,12 +73,12 @@ def main():
     for step in range(total):
         r = data.rows.iloc[step % len(data.rows)]; im = data.image(r)
         if im is None: continue
-        if args.cond == 'gt': answer = f"{r.gt:.1f}"
+        if args.cond == "gt": answer = f"{r['gt']:.1f}"
         elif args.decimals == 2: answer = f"{r.teacher_full:.2f}"                       # 교사 숫자 그대로(둘째 자리)
         elif args.subset: answer = f"{np.floor(r.teacher_full * 10) / 10:.1f}"          # 같은 숫자를 첫째 자리에서 절사 (v1 라벨 규칙과 동일)
         else: answer = f"{r.teacher_greedy1:.1f}"
         enc, P, ans_ids = build(proc, im, answer, dev); out = model(**enc); logits = out.logits[0, P - 1: P - 1 + len(ans_ids)].float()   # 각 답 토큰 위치의 예측 로짓
-        if args.cond in ("hard", "gt"):
+        if args.cond in ("hard", "gt", "gthard"):
             loss = torch.nn.functional.cross_entropy(logits, torch.tensor(ans_ids, device=dev))
         else:
             kd = {k["prefix"]: k for k in json.loads(r.kd_nodes)}; losses = []
@@ -91,6 +93,10 @@ def main():
                 else:
                     losses.append(torch.nn.functional.cross_entropy(logits[k][None], torch.tensor([tid], device=dev)))
             loss = torch.stack(losses).mean() * float(data.w[step % len(data.rows)])
+        if args.cond in ("gthard", "gtsoft") and float(r["gt"]) > 0:   # † arm: GT 있는 행만 (1−λ)·pseudo + λ·CE(GT)
+            enc2, P2, ans2 = build(proc, im, f"{r['gt']:.1f}", dev); out2 = model(**enc2)
+            lg2 = out2.logits[0, P2 - 1: P2 - 1 + len(ans2)].float()
+            loss = (1.0 - args.gt_lambda) * loss + args.gt_lambda * torch.nn.functional.cross_entropy(lg2, torch.tensor(ans2, device=dev))
         (loss / args.accum).backward(); run += loss.item(); nrun += 1
         if (step + 1) % args.accum == 0:
             torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], 1.0); opt.step(); sch.step(); opt.zero_grad()
