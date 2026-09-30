@@ -48,8 +48,13 @@ started. `run.sh` still targets the old grid and must not be used until updated 
 Every cell is `δ1 / AbsRel` on the pool's own evaluation sets, filled in from each cell's evaluation log as it
 finishes; a dash means not evaluated yet. Numbers are taken only from logs of this repository (pre-registration:
 the decision rule of `32_decide.py` is applied per budget row; equal-budget claims must also exceed the B = 400
-replicate spread below). The `teacher` row is DepthLM 12B evaluated once on the same pixels with the same midpoint
-decoding; `student zero-shot` is the untrained student. Both are baselines, not cells, and carry no loss condition.
+replicate spread below). **`soft` and `hard` are both pseudo-label losses (`Loss_pseudo`)** — hard is CE on the
+teacher's answer, soft is KL to the teacher's digit distribution; no cell of the main grid uses ground truth.
+The GT arms (`Loss_gt`, `Loss_gt + Loss_pseudo`) are budget-external and live in their own table below the grids.
+The `teacher` row is DepthLM 12B evaluated once on the same pixels with the same midpoint decoding;
+`student zero-shot` is the untrained student. Both are baselines, not cells, and carry no loss condition.
+All runs execute on H200; pools are filled in the order indoor → driving → mixed, and the B = 25,600 extension
+rows are **deferred** (kept empty for now).
 
 ### Indoor pool — evaluated on iBims-1, NYUv2
 
@@ -73,7 +78,7 @@ decoding; `student zero-shot` is the untrained student. Both are baselines, not 
 | | | | hard | — | — |
 | | 400 | 16 | soft | — | — |
 | | | | hard | — | — |
-| **25,600** | 6400 | 4 | soft | — | — |
+| **25,600** (deferred) | 6400 | 4 | soft | — | — |
 | | | | hard | — | — |
 | | 1600 | 16 | soft | — | — |
 | | | | hard | — | — |
@@ -102,7 +107,7 @@ decoding; `student zero-shot` is the untrained student. Both are baselines, not 
 | | | | hard | — | — |
 | | 400 | 16 | soft | — | — |
 | | | | hard | — | — |
-| **25,600** | 6400 | 4 | soft | — | — |
+| **25,600** (deferred) | 6400 | 4 | soft | — | — |
 | | | | hard | — | — |
 | | 1600 | 16 | soft | — | — |
 | | | | hard | — | — |
@@ -131,12 +136,28 @@ decoding; `student zero-shot` is the untrained student. Both are baselines, not 
 | | | | hard | — | — | — | — |
 | | 400 | 16 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
-| **25,600** | 6400 | 4 | soft | — | — | — | — |
+| **25,600** (deferred) | 6400 | 4 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
 | | 1600 | 16 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
 | | | | teacher | — | — | — | — |
 | | | | student zero-shot | — | — | — | — |
+
+### GT arms — budget-external reference (C-3b), never rank-compared with the main grid
+
+GT pixels are extra information outside the teacher-query budget (human annotation, a different currency), so these
+arms answer a separate question — "how much would ground truth add?" — at the grid-optimal cell of each pool once it
+is known. λ (the mixing weight) and the GT source per pool are fixed before running (indoor/mixed: NYUv2 `gt` column
+exists in the labels; driving: GT extraction to be confirmed).
+
+| Pool | Arm | Cell | Set 1 | Set 2 |
+|:--|:--|:--|:--|:--|
+| indoor | gt (CE on GT only) | grid optimum (TBD) | iBims-1 — | NYUv2 — |
+| indoor | gt + pseudo (λ TBD) | grid optimum (TBD) | iBims-1 — | NYUv2 — |
+| driving | gt (CE on GT only) | grid optimum (TBD) | DDAD — | nuScenes — |
+| driving | gt + pseudo (λ TBD) | grid optimum (TBD) | DDAD — | nuScenes — |
+| mixed | gt (CE on GT only) | grid optimum (TBD) | 4 sets — | |
+| mixed | gt + pseudo (λ TBD) | grid optimum (TBD) | 4 sets — | |
 
 ### Noise floor — B = 400 replicate cells (δ1 spread across 4 replicates, per set)
 
@@ -160,21 +181,33 @@ for N = 400). The spread (max − min of δ1 over the 4 replicates) is the floor
 | Experiment | Condition | Cell / subset | Result |
 |:--|:--|:--|:--|
 | W1 pilot (C-3a) | value-space W1 vs soft KL, same cell | to be pre-registered before running | — |
-| GT + pseudo arm (C-3b) | Loss_gt + Loss_pseudo, budget-external GT | λ, GT source, cell: to be fixed before running | — |
 | Label decimals (C-3c) | hard, 1 vs 2 decimals, same subset | fixed subset, re-labeled to 2 decimals | — |
 | Recipe-mix (C-4d) | uniform mixed vs per-domain optimal recipes | gate: ≥1 claim in a domain grid | — |
 
+(The GT arms have their own table above.)
+
 ## Order of work
 
-1. **Prerequisites (local)**: update `31_grid.py` / `32_decide.py` comparison lists to the v3 budget rows; update
-   `run.sh` to `cells_v3.json` / `rows_B*` / `rep_*`; smoke-test one tiny cell locally.
-2. **Baselines (local)**: teacher on all four evaluation sets (same pixels, midpoint decoding) and the zero-shot
-   student — fills the two baseline rows of every table and anchors the teacher-accuracy ceiling.
-3. **B = 400 row first, all pools** (H200; cheapest, 3 arms × soft/hard × ≥3 seeds + the 12 replicate cells per
-   pool): establishes the noise floor before any larger budget is interpreted.
-4. **B = 1,600 → 6,400 → 25,600** per pool on H200, one job per GPU, in the order indoor → driving → mixed;
-   evaluate each cell on the pool's own sets as it finishes and fill the table.
-5. **Decide per pool** (`32_decide.py`): apply the pre-registered rule per budget row; claims only where the CI
-   excludes zero on all of the pool's sets and the difference exceeds the noise floor.
-6. **Side experiments** after the main rows they depend on: W1 pilot (needs its cell's KL result), decimals
-   ablation (needs the 2-decimal re-label), GT+pseudo arm (needs the grid optimum), recipe-mix (needs domain claims).
+All experiments run on H200 (one job at a time on a whole GPU, as before: GitHub issue → Jenkins → container).
+Pools are filled **indoor → driving → mixed**; the B = 25,600 rows are deferred. To keep each H200 job short,
+a job is one (pool, budget row, loss): six grid jobs per pool plus one baseline job, each ≈ 7–12 h instead of a
+single 20 h+ run. Evaluation economy (pre-registered): main cells (seed 0) are evaluated on the large sets
+(`ref/dist_*`); the extra seeds and the 12 replicate cells only need the spread, so they are evaluated on the small
+pixel sets (`ref/tree_px_*`), which keeps the B = 400 jobs from being dominated by evaluation.
+
+0. **Prerequisites (local, before any submission)**: update `31_grid.py` / `32_decide.py` comparison lists to the
+   v3 budget rows; update `run.sh` to `cells_v3.json` / `rows_B*` / `rep_*`; smoke-test one tiny cell locally.
+1. **Job 0 — baselines (H200, once, ≈ 4–6 h)**: teacher on all four evaluation sets (same pixels, midpoint
+   decoding) + zero-shot student. Fills the two baseline rows of every table first, so every later cell reads
+   against the teacher ceiling.
+2. **Per pool, jobs A–C for each loss (soft first, then hard)**:
+   - **A: B = 400 row (≈ 12 h)** — 3 arms × 3 seeds + 12 replicate cells (training ≈ 1.3 h; the rest is
+     evaluation). Establishes the noise floor before any larger budget is interpreted.
+   - **B: B = 1,600 row (≈ 7 h)** — 3 arms, 1 seed.
+   - **C: B = 6,400 row (≈ 9 h)** — 3 arms, 1 seed.
+   Each cell is evaluated on the pool's own sets inside the same job and the table is filled from the logs.
+3. **Decide per pool** (`32_decide.py`) after its six jobs: apply the pre-registered rule per budget row; claims
+   only where the CI excludes zero on all of the pool's sets and the difference exceeds the noise floor. Then move
+   to the next pool (indoor → driving → mixed).
+4. **Side experiments** after the main rows they depend on: W1 pilot (needs its cell's KL result), decimals
+   ablation (needs the 2-decimal re-label), GT arms (need the grid optimum), recipe-mix (needs ≥ 1 domain claim).
