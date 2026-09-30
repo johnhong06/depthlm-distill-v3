@@ -10,7 +10,7 @@
 - [x] README 에 채울 격자 스켈레톤 생성 (3풀 × soft/hard 22행 + teacher·zero-shot 베이스라인 + 잡음 바닥 표 + 부수 실험 표 + 진행 순서) — 2026-09-30, 커밋 76c4ce2
 - [ ] `31_grid.py`·`32_decide.py` 등예산 비교 목록을 v3 행 단위(각 B 의 k arm 쌍)로 갱신
 - [ ] 풀 픽셀 GT 추출 스크립트 (SUN RGB-D·NYUv2·KITTI 깊이맵 → 라벨 parquet gt 열, 커버리지 풀별 보고) — gt+pseudo 선행 조건 (V-3)
-- [ ] `20_train_student.py` 에 gt+pseudo 조건 추가 (L = L_pseudo + λ·L_gt, GT 있는 행만 L_gt, λ 사전 고정)
+- [ ] `20_train_student.py` 에 gt+hard·gt+soft 조건 추가 (L = (1−λ)·L_pseudo + λ·L_gt, λ = 0.1, GT 있는 행만 L_gt)
 - [ ] `21_eval_student.py` 에 greedy 전용 플래그 (반복 셀·추가 시드용, V-3)
 - [ ] 반복 셀 학습·집계 스크립트 (잡음 바닥 보고 전용, 본 격자와 분리)
 - [ ] indoor B=400 행(soft/hard/gt+pseudo + 반복)부터 H200 제출 — 시드 ≥3(soft/hard)
@@ -42,6 +42,14 @@
 - **gt+pseudo 를 본 격자와 병행 (사용자 의도 확인)**: "최적 셀에서 나중에"가 아니라 soft/hard 와 같은 셀에서 같이 진행. 표에는 각 셀의 세 번째 행(† 표시)으로 채우되, C-3b 의 지위는 유지 — 예산 밖 추가 정보이므로 **등예산 순위 비교에서는 제외**(soft/hard 만 판정). gt 단독(CE GT)은 부수 실험 표의 참조 행으로.
 - **GT 커버리지 실측**: 현재 세 풀의 라벨 parquet 모두 gt>0 이 **0/44,800** — 옛 gt 조건은 풀 v1 라벨 기준이었다. 풀 픽셀 GT 추출 스크립트가 gt+pseudo 의 선행 조건(로컬 ~/data 의 SUN RGB-D·NYUv2·KITTI 깊이맵에서 추출, 커버리지 풀별 보고. 희소 GT 라 무라벨 픽셀 존재 — L_gt 는 GT 있는 행에만).
 - **진행 방식**: indoor 부터, 싼 행부터 제출해 표를 빠르게 채움. 1작업 = (풀, 예산 행, 손실 ∈ {soft, hard, gt+pseudo}) — 풀당 9작업 + 베이스라인 1작업, 각 ≈7–12 h. λ 는 실행 전 고정(기본 후보: 합산 후 평균 정규화).
+
+### V-4 (2026-09-30) λ = 0.1 고정, gt 병행 arm 을 gt+hard·gt+soft 로 분리, B=25,600 삭제 (사용자 지시)
+- **λ**: 고전 KD(Hinton) 의 "정답(true-label) 항에 상당히 낮은 가중치가 최선" [arXiv:1503.02531]을 따라
+  L = (1−λ)·L_pseudo + λ·L_gt, **λ = 0.1** 사전 고정(논문에 보편 수치는 없어 관행 수치 채택). 가중 평균 형태라 유효 학습률 유지.
+- **gt 병행 arm 분리 (사용자 지적)**: 의사라벨 항이 hard(CE)/soft(KL) 두 형태이므로 합산 arm 도 **gt+hard, gt+soft** 두 조건.
+  표의 † 행 분리(셀당 4행: soft/hard/gt+soft/gt+hard), 작업 = (풀, 예산 행, 손실 4종) → 풀당 12작업.
+- **B=25,600 삭제**: deferred 가 아니라 격자에서 제거. `03_build_cells_v3.py` 에서 확장 제거 후 3개 풀 재생성(본 9셀,
+  새 질의 0 재확인), rows_B25600_* 삭제. 필요해지면 C-2 고정 규칙으로 재추가.
 
 ## 실행 로그
 

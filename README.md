@@ -11,7 +11,7 @@ unchanged, prior results are not. Design rationale: [paper/design_v3_corrections
 |---|---|
 | Question 1: allocation | With the number of teacher queries fixed at B, is it better to spread B over many distinct images with few pixels each, or few images with many pixels each? |
 | Question 2: training signal | Cross-entropy on the teacher's single answer (`hard`) or KL to the teacher's digit distribution (`soft`)? |
-| Grid | budget B ∈ {400, 1600, 6400} × pixels-per-image k ∈ {1, 4, 16}, N = B/k — 9 nested cells, every budget row is a 3-way equal-budget comparison; extension B = 25,600 with k ∈ {4, 16} (k = 1 exceeds the 6,400-image pool and is reported as missing) |
+| Grid | budget B ∈ {400, 1600, 6400} × pixels-per-image k ∈ {1, 4, 16}, N = B/k — 9 nested cells, every budget row is a 3-way equal-budget comparison (larger budgets can be re-added later by the fixed rule: every k with N = B/k ≤ pool size) |
 | Pools | indoor (SUN RGB-D, NYUv2), driving (KITTI), mixed (50/50), 6,400 images each, order v5 (near-duplicates demoted: dHash Hamming ≤ 10 and 32×32 grayscale correlation > 0.9) |
 | Labels | DepthLM 12B answers on the pool pixels; the v3 grid and its replicate cells are fully covered by the existing 44,800 labels per pool — **zero new teacher queries** (verified by `experiments/03_build_cells_v3.py`) |
 | Ground truth | never used for training in the main grid; a separate, clearly-marked `Loss_gt + Loss_pseudo` arm treats GT as budget-external information |
@@ -50,14 +50,18 @@ finishes; a dash means not evaluated yet. Numbers are taken only from logs of th
 the decision rule of `32_decide.py` is applied per budget row; equal-budget claims must also exceed the B = 400
 replicate spread below). **`soft` and `hard` are both pseudo-label losses (`Loss_pseudo`)** — hard is CE on the
 teacher's answer, soft is KL to the teacher's digit distribution; neither uses ground truth.
-**`gt+pseudo` († rows) is `Loss_gt + Loss_pseudo`**, trained alongside soft/hard in the same cells: † marks that it
-uses GT pixels in addition to the same teacher labels — budget-external information, so it is reported in place but
-**excluded from the equal-budget ranking** (C-3b). GT coverage of the pool pixels is extracted beforehand and
-reported per pool (the current label files carry no GT yet; extraction is a prerequisite).
+**The † rows are `Loss_gt + Loss_pseudo`**, trained alongside the pure arms in the same cells, and the pseudo term
+keeps its two forms: `gt+hard` = (1−λ)·CE(teacher answer) + λ·CE(GT), `gt+soft` = (1−λ)·KL(teacher distribution)
++ λ·CE(GT), with **λ = 0.1 fixed in advance** — classic KD found the best results with a considerably lower weight
+on the true-label term [arXiv:1503.02531]; the paper gives no universal value, so the common instantiation 0.1 is
+pre-registered, and the weighted average keeps the effective learning rate comparable to the pure arms. † marks
+budget-external information (GT pixels on top of the same teacher labels): reported in place, but **excluded from
+the equal-budget ranking** (C-3b). GT coverage of the pool pixels is extracted beforehand and reported per pool
+(the current label files carry no GT yet; extraction is a prerequisite).
 The `teacher` row is DepthLM 12B evaluated once on the same pixels with the same midpoint decoding;
 `student zero-shot` is the untrained student. Both are baselines, not cells, and carry no loss condition.
-All runs execute on H200; pools are filled in the order indoor → driving → mixed, and the B = 25,600 extension
-rows are **deferred** (kept empty for now).
+All runs execute on H200; pools are filled in the order indoor → driving → mixed. The B = 25,600 extension is
+dropped from the grid for now (re-added later by the fixed rule if needed).
 
 ### Indoor pool — evaluated on iBims-1, NYUv2
 
@@ -65,37 +69,40 @@ rows are **deferred** (kept empty for now).
 |---:|---:|---:|:--|:--|:--|
 | **400** | 400 | 1 | soft | — | — |
 | | | | hard | — | — |
-| | | | gt+pseudo † | — | — |
+| | | | gt+soft † | — | — |
+| | | | gt+hard † | — | — |
 | | 100 | 4 | soft | — | — |
 | | | | hard | — | — |
-| | | | gt+pseudo † | — | — |
+| | | | gt+soft † | — | — |
+| | | | gt+hard † | — | — |
 | | 25 | 16 | soft | — | — |
 | | | | hard | — | — |
-| | | | gt+pseudo † | — | — |
+| | | | gt+soft † | — | — |
+| | | | gt+hard † | — | — |
 | **1,600** | 1600 | 1 | soft | — | — |
 | | | | hard | — | — |
-| | | | gt+pseudo † | — | — |
+| | | | gt+soft † | — | — |
+| | | | gt+hard † | — | — |
 | | 400 | 4 | soft | — | — |
 | | | | hard | — | — |
-| | | | gt+pseudo † | — | — |
+| | | | gt+soft † | — | — |
+| | | | gt+hard † | — | — |
 | | 100 | 16 | soft | — | — |
 | | | | hard | — | — |
-| | | | gt+pseudo † | — | — |
+| | | | gt+soft † | — | — |
+| | | | gt+hard † | — | — |
 | **6,400** | 6400 | 1 | soft | — | — |
 | | | | hard | — | — |
-| | | | gt+pseudo † | — | — |
+| | | | gt+soft † | — | — |
+| | | | gt+hard † | — | — |
 | | 1600 | 4 | soft | — | — |
 | | | | hard | — | — |
-| | | | gt+pseudo † | — | — |
+| | | | gt+soft † | — | — |
+| | | | gt+hard † | — | — |
 | | 400 | 16 | soft | — | — |
 | | | | hard | — | — |
-| | | | gt+pseudo † | — | — |
-| **25,600** (deferred) | 6400 | 4 | soft | — | — |
-| | | | hard | — | — |
-| | | | gt+pseudo † | — | — |
-| | 1600 | 16 | soft | — | — |
-| | | | hard | — | — |
-| | | | gt+pseudo † | — | — |
+| | | | gt+soft † | — | — |
+| | | | gt+hard † | — | — |
 | | | | teacher | — | — |
 | | | | student zero-shot | — | — |
 
@@ -105,37 +112,40 @@ rows are **deferred** (kept empty for now).
 |---:|---:|---:|:--|:--|:--|
 | **400** | 400 | 1 | soft | — | — |
 | | | | hard | — | — |
-| | | | gt+pseudo † | — | — |
+| | | | gt+soft † | — | — |
+| | | | gt+hard † | — | — |
 | | 100 | 4 | soft | — | — |
 | | | | hard | — | — |
-| | | | gt+pseudo † | — | — |
+| | | | gt+soft † | — | — |
+| | | | gt+hard † | — | — |
 | | 25 | 16 | soft | — | — |
 | | | | hard | — | — |
-| | | | gt+pseudo † | — | — |
+| | | | gt+soft † | — | — |
+| | | | gt+hard † | — | — |
 | **1,600** | 1600 | 1 | soft | — | — |
 | | | | hard | — | — |
-| | | | gt+pseudo † | — | — |
+| | | | gt+soft † | — | — |
+| | | | gt+hard † | — | — |
 | | 400 | 4 | soft | — | — |
 | | | | hard | — | — |
-| | | | gt+pseudo † | — | — |
+| | | | gt+soft † | — | — |
+| | | | gt+hard † | — | — |
 | | 100 | 16 | soft | — | — |
 | | | | hard | — | — |
-| | | | gt+pseudo † | — | — |
+| | | | gt+soft † | — | — |
+| | | | gt+hard † | — | — |
 | **6,400** | 6400 | 1 | soft | — | — |
 | | | | hard | — | — |
-| | | | gt+pseudo † | — | — |
+| | | | gt+soft † | — | — |
+| | | | gt+hard † | — | — |
 | | 1600 | 4 | soft | — | — |
 | | | | hard | — | — |
-| | | | gt+pseudo † | — | — |
+| | | | gt+soft † | — | — |
+| | | | gt+hard † | — | — |
 | | 400 | 16 | soft | — | — |
 | | | | hard | — | — |
-| | | | gt+pseudo † | — | — |
-| **25,600** (deferred) | 6400 | 4 | soft | — | — |
-| | | | hard | — | — |
-| | | | gt+pseudo † | — | — |
-| | 1600 | 16 | soft | — | — |
-| | | | hard | — | — |
-| | | | gt+pseudo † | — | — |
+| | | | gt+soft † | — | — |
+| | | | gt+hard † | — | — |
 | | | | teacher | — | — |
 | | | | student zero-shot | — | — |
 
@@ -145,37 +155,40 @@ rows are **deferred** (kept empty for now).
 |---:|---:|---:|:--|:--|:--|:--|:--|
 | **400** | 400 | 1 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
-| | | | gt+pseudo † | — | — | — | — |
+| | | | gt+soft † | — | — | — | — |
+| | | | gt+hard † | — | — | — | — |
 | | 100 | 4 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
-| | | | gt+pseudo † | — | — | — | — |
+| | | | gt+soft † | — | — | — | — |
+| | | | gt+hard † | — | — | — | — |
 | | 25 | 16 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
-| | | | gt+pseudo † | — | — | — | — |
+| | | | gt+soft † | — | — | — | — |
+| | | | gt+hard † | — | — | — | — |
 | **1,600** | 1600 | 1 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
-| | | | gt+pseudo † | — | — | — | — |
+| | | | gt+soft † | — | — | — | — |
+| | | | gt+hard † | — | — | — | — |
 | | 400 | 4 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
-| | | | gt+pseudo † | — | — | — | — |
+| | | | gt+soft † | — | — | — | — |
+| | | | gt+hard † | — | — | — | — |
 | | 100 | 16 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
-| | | | gt+pseudo † | — | — | — | — |
+| | | | gt+soft † | — | — | — | — |
+| | | | gt+hard † | — | — | — | — |
 | **6,400** | 6400 | 1 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
-| | | | gt+pseudo † | — | — | — | — |
+| | | | gt+soft † | — | — | — | — |
+| | | | gt+hard † | — | — | — | — |
 | | 1600 | 4 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
-| | | | gt+pseudo † | — | — | — | — |
+| | | | gt+soft † | — | — | — | — |
+| | | | gt+hard † | — | — | — | — |
 | | 400 | 16 | soft | — | — | — | — |
 | | | | hard | — | — | — | — |
-| | | | gt+pseudo † | — | — | — | — |
-| **25,600** (deferred) | 6400 | 4 | soft | — | — | — | — |
-| | | | hard | — | — | — | — |
-| | | | gt+pseudo † | — | — | — | — |
-| | 1600 | 16 | soft | — | — | — | — |
-| | | | hard | — | — | — | — |
-| | | | gt+pseudo † | — | — | — | — |
+| | | | gt+soft † | — | — | — | — |
+| | | | gt+hard † | — | — | — | — |
 | | | | teacher | — | — | — | — |
 | | | | student zero-shot | — | — | — | — |
 
@@ -209,8 +222,8 @@ for N = 400). The spread (max − min of δ1 over the 4 replicates) is the floor
 
 All experiments run on H200 (one job at a time on a whole GPU, as before: GitHub issue → Jenkins → container).
 Pools are filled **indoor → driving → mixed**, and within a pool the cheapest rows go first so the tables fill
-fast; the B = 25,600 rows are deferred. A job is one (pool, budget row, loss) with
-loss ∈ {soft, hard, gt+pseudo}: nine grid jobs per pool plus one baseline job, each well under a day.
+fast. A job is one (pool, budget row, loss) with loss ∈ {soft, hard, gt+soft, gt+hard}: twelve grid jobs per
+pool plus one baseline job, each well under a day.
 
 **Evaluation (pre-registered)**: everything is evaluated on the large sets (`ref/dist_*`) — the small pixel sets
 are not used, since their per-replicate sampling noise (~±0.03 δ1 at ~300 px) is the same size as the allocation
@@ -228,9 +241,9 @@ get the full evaluation including the uncertainty tree (CoV), while extra seeds 
    - **A1/A2: B = 400, soft / hard (≈ 10–12 h each)** — 3 arms × 3 seeds + 12 replicate cells
      (training ≈ 1.3 h; main cells full eval, the other 18 checkpoints greedy-only). Fills the first budget row
      and the noise floor together.
-   - **A3: B = 400, gt+pseudo (≈ 7 h)** — 3 arms × 1 seed, full eval (reference arm, no replicates).
-   - **B1/B2/B3: B = 1,600, soft / hard / gt+pseudo (≈ 7 h each)** — 3 arms, 1 seed.
-   - **C1/C2/C3: B = 6,400, soft / hard / gt+pseudo (≈ 9 h each)** — 3 arms, 1 seed.
+   - **A3/A4: B = 400, gt+soft / gt+hard (≈ 7 h each)** — 3 arms × 1 seed, full eval (reference arms, no replicates).
+   - **B1–B4: B = 1,600, soft / hard / gt+soft / gt+hard (≈ 7 h each)** — 3 arms, 1 seed.
+   - **C1–C4: B = 6,400, soft / hard / gt+soft / gt+hard (≈ 9 h each)** — 3 arms, 1 seed.
    Each cell is evaluated inside its job and its table row is filled from the log as soon as the zip arrives.
 3. **Decide per pool** (`32_decide.py`) after its jobs: pre-registered rule per budget row (soft/hard only; the
    † rows are excluded from ranking); claims only where the CI excludes zero on all of the pool's sets and the
