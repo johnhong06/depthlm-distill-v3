@@ -451,6 +451,7 @@ case $MODE in
          BDS=$(echo $EVAL_DATASETS | tr ' ' ',')
          say "[baseline] zero-shot 학생 greedy 평가: $BDS"
          python -u experiments/21_eval_student.py --tag zeroshot_f${FOCAL} --focal "$FOCAL" --eval_set large --datasets "$BDS" --greedy_only ${EVAL_EXTRA:-} >> "$OUT_ROOT/eval_zeroshot_f${FOCAL}_large.log" 2>&1 || say "!!! zero-shot 평가 실패"
+         grep -E "^\[zeroshot|s/px$" "$OUT_ROOT/eval_zeroshot_f${FOCAL}_large.log" | tee -a "$LOG" || true   # 세트별 요약(파싱률·"0.0" 비율·δ1)을 화면(이슈 댓글)에도 — 로그만으로 표를 채울 수 있게
          python experiments/34_baselines.py --root "$OUT_ROOT" --datasets "$BDS" 2>&1 | tee -a "$LOG" || say "!!! 베이스라인 표 실패";;
   *)     run_cells train_cell; run_cells eval_cell;;
 esac
