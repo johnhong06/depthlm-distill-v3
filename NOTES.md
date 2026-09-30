@@ -16,8 +16,9 @@
 - [x] `run.sh` v3 갱신 — cells_v3.json, 단위 = 셀×SEEDS(+REPLICATES 반복 셀), 시드>0·반복은 greedy 전용 평가 — 2026-09-30
 - [x] 스모크: gtsoft·gthard GPU 학습, `--greedy_only` 평가, `bash run.sh smoke` 전체 파이프라인(30스텝+3px, 파싱 100 %) — 2026-09-30
 - [x] 최종 점검 (V-7): 결함 8건 수정, 베이스라인 모드·교사 행, 이슈 한 줄 KEY=값 인자 — 2026-09-30
-- [ ] (사용자) 옛 저장소에서 도는 indoor hard zip 수령 → `05_import_legacy.py --cond hard` 로 6셀 통합
-- [ ] H200 제출 — README "Order of work" 표 1–12 (indoor) → outdoor → mixed
+- [x] 학생 입출력을 DepthLM 공식 형식으로 통일 (V-8) + 학습 중 이미지 위치 버그 수정 (V-9), GPU 스모크 — 2026-09-30
+- [ ] (사용자) 옛 저장소에서 도는 indoor hard: v2 결과라 본 격자에 안 씀 — 슬롯이 필요하면 중단, 거의 끝났으면 완주(비교표용)
+- [ ] H200 제출 — README "Order of work" 표 1–14 (indoor) → outdoor → mixed
 - [ ] W1 파일럿: 값 공간(log-depth) 수식·대상 셀 확정 → 한 셀 실행
 - [ ] hard 1자리 vs 2자리 ablation: 부분집합 2자리 재라벨(teacher_full) → `--decimals 2` 비교
 - [ ] 레시피-혼합: per-row 조건 학습 코드 (게이트: 도메인 격자 주장 ≥1건)
@@ -97,6 +98,28 @@
 8. **git 위생**: .gitignore 에 hf_token.txt·*.token·/data/·*.tar.part_* (옛 저장소에 있던 것), README 수치의 근거 표를 `tables/` 에 커밋.
 - 검증: 모든 스크립트 구문 OK, gthard 시드 1 + rows 제한 GPU 학습 OK, `run.sh baseline` 제한 실행 OK(zip 내용 확인),
   들여온 indoor soft 로 31·32·33 실행 OK (32: B1600 soft "약한 근거: 픽셀 많은 쪽", B6400 k1−k16 "약한 근거: 이미지 많은 쪽" — D-27 과 같음).
+
+### V-8 (2026-09-30) 학생 입출력 = 교사와 같은 DepthLM 공식 형식 (사용자 결정 A: "공정한 실험이 필요")
+- 발견: 교사는 공식 질의(`Given this image, how far is the point pointed by the red arrow …`) + 템플릿 `<think> The point is around `
+  뒤 숫자로 라벨링됐는데, 학생은 다른 질의(`… Answer with only a number, for example 2.35.`)로 숫자만 답하도록 학습됐다.
+- 근거: (1) DepthLM 의 기본 모델이 바로 Qwen2.5-VL-3B — 원문은 공식 형식으로 학습. (2) 교사 자릿수 분포(kd_nodes)는 공식 질의·템플릿
+  뒤의 조건부에서 읽은 것 → 학생도 같은 조건부를 배워야 soft 증류가 원리적으로 맞다. (3) v2 학생은 평가 픽셀의 27–34 % 에 "2.3" 이라고
+  답했다(교사 7 %). 학습 라벨을 자리별 최빈값으로 따라가면 1.7 이라 라벨 쏠림으로는 설명되지 않고, 예시 2.35(→2.3)와 맞아떨어진다.
+  반대 증거: D-59 에서 학습 전 Qwen 7B 는 같은 예시에도 1.80 으로 답했다 → 원인 확정은 하지 않는다.
+- 구현: 학생 = 공식 질의 → 템플릿 채움 → 숫자 + ` meters`(Qwen 토큰 1개, id 20044). 손실은 숫자와 종료 토큰에만(템플릿은 채워 넣는 문맥),
+  soft 의 종료 클래스도 ` meters`(교사 end_mass = 숫자 뒤 비숫자 질량과 같은 뜻). 평가도 같은 질의·템플릿. 토큰화 검증: 템플릿·숫자·종료를
+  따로 자른 것 = 이어 붙여 자른 것.
+- zero-shot 학생(공식 형식): 거의 모든 픽셀에 "1.0" (iBims-1 50 px 중 48, NYUv2 50/50), 파싱 100 % — 학습 전 기준선.
+- 결과 처리: v2 학생 결과(가져온 soft 6셀, 도는 hard)는 본 격자에서 제외 → `results/v2_legacy/`, README v2 비교표. 교사 쪽 자산은 전부 유효.
+
+### V-9 (2026-09-30) 학습 중 이미지 위치 인코딩이 1차원으로 떨어지던 버그 — v2 전체에 해당
+- transformers 5.16 의 Qwen2.5-VL 은 `mm_token_type_ids` 가 없으면 이미지 3차원 위치(M-RoPE: 시간·세로·가로)를 계산하지 않고
+  "모델이 추론" 경로로 가서 모든 토큰에 1차원 순번을 붙인다 (modeling_qwen2_5_vl.py: can_compute_mrope 조건).
+- v2 학습(20_train)은 input_ids·attention_mask·pixel_values·image_grid_thw 만 넘겨 **1차원 위치로 학습**, 평가(21_eval)는 프로세서 출력을
+  전부 넘겨 **3차원 위치로 평가** — 학습·평가 불일치. 같은 입력에서 유무만으로 답 위치 로짓 최대 차 1.43.
+- 수정: 학습 입력에 `mm_token_type_ids`(템플릿·답 = 텍스트 0) 추가, 평가에서도 템플릿만큼 늘려 넘김. 검증: 이미지 토큰 391개가
+  17×23 격자의 2차원 위치를 받는다. 트리 함수는 첫 forward 에만 보조 입력을 쓰므로 입력을 미리 늘려 빈 접두사로 호출.
+- 발견 경위: 템플릿을 평가 입력 끝에 붙이자 길이 불일치(905 vs 897 = 템플릿 8토큰) 오류가 나서 추적.
 
 ## 실행 로그
 

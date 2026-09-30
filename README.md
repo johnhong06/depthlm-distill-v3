@@ -14,6 +14,7 @@ unchanged, prior results are not. Design rationale: [paper/design_v3_corrections
 | Grid | budget B ∈ {400, 1600, 6400} × pixels-per-image k ∈ {1, 4, 16}, N = B/k — 9 nested cells, every budget row is a 3-way equal-budget comparison (larger budgets can be re-added later by the fixed rule: every k with N = B/k ≤ pool size) |
 | Pools | indoor (SUN RGB-D, NYUv2), driving (KITTI), mixed (50/50), 6,400 images each, order v5 (near-duplicates demoted: dHash Hamming ≤ 10 and 32×32 grayscale correlation > 0.9) |
 | Labels | DepthLM 12B answers on the pool pixels; the v3 grid and its replicate cells are fully covered by the existing 44,800 labels per pool — **zero new teacher queries** (verified by `experiments/03_build_cells_v3.py`) |
+| Student input/output | **the teacher's own official DepthLM format**: the official question, then the template `<think> The point is around ` is filled in and the student answers the number (first decimal) followed by ` meters`. The teacher labels and its digit distributions were read in exactly this position, so the student learns the same conditional; image positions use Qwen2.5-VL's 3-D M-RoPE in training and evaluation alike |
 | Ground truth | never used by the pure arms (`soft`, `hard`); the † arms `gt+soft` / `gt+hard` add λ = 0.1 · CE(GT) and are reported beside them but excluded from the equal-budget ranking |
 | Noise floor | the B = 400 arms are re-run over training subsets (image blocks / pixel indices, free relabelings) and over seeds 0/1/2; equal-budget claims must exceed the larger spread |
 | Evaluation | δ1 (max(pred/gt, gt/pred) < 1.25, identical to the official DepthLM metric) on iBims-1, NYUv2 (indoor), DDAD, nuScenes (driving), ETH3D fully held out; each pool on its own domain only |
@@ -31,7 +32,7 @@ so scene counts are reported as descriptive statistics only.
 run.sh                             H200 entry point: MODE=grid|train|eval|baseline|smoke, CELLS / SEEDS / REPLICATES / SKIP
 experiments/03_build_cells_v3.py   (B,k) grid + replicate cells + label-coverage check (run; zero new queries)
 experiments/04_extract_gt.py       GT for the pool pixels (for the † arms only), validated against the teacher labels
-experiments/05_import_legacy.py    maps v2 (N,k) results onto identical v3 (B,k) cells, with provenance
+experiments/05_import_legacy.py    maps v2 (N,k) results onto v3 cell names into results/v2_legacy/ — comparison only, never the grid
 experiments/20_train_student.py    LoRA training: soft / hard / gtsoft / gthard (+ gt, wsoft), --seed, --decimals {1,2}
 experiments/21_eval_student.py     per-cell evaluation (full, or --greedy_only for seeds and replicates)
 experiments/31_grid.py, 32_decide.py   per-pool tables and the pre-registered decision rule (--floor = noise floor)
@@ -40,21 +41,22 @@ experiments/34_baselines.py        teacher row (from recorded teacher outputs in
 pools/<pool>/                      pool.jsonl (v5 order), teacher_labels.parquet (+ gt), rows_B*_k*.parquet, rep_*.parquet, cells_v3.json, gt_coverage.md
 tables/                            committed copies of the tables behind the numbers below
 third_party/DepthLM_Official/      official curation/metric utilities (FAIR NC — see LICENSE, NOTICE)
-paper/design_v3_corrections.md     the C-1..C-4 design decisions with evidence (Korean); later amendments in NOTES.md V-1..V-7
+paper/design_v3_corrections.md     the C-1..C-4 design decisions with evidence (Korean); later amendments in NOTES.md V-1..V-9
 ```
 
 ## Status
 
 2026-09-30: implementation complete and smoke-tested on GPU (every loss, greedy/full evaluation, baseline mode, the
-full `run.sh smoke` pipeline). Indoor soft: 6 of 9 cells imported from the v2 H200 run. Teacher rows filled for all
-four evaluation sets. Next: H200 submissions in the order under [Order of work](#order-of-work).
+full `run.sh` pipeline). Teacher rows filled for all four evaluation sets. The student now uses the teacher's
+official input/output format and correct image positions (NOTES V-8, V-9), so **no v2 student result enters the
+grid**; the six v2 indoor soft cells are kept only as a comparison table below. Next: H200 submissions in the order
+under [Order of work](#order-of-work).
 
 ## Results
 
 Every cell is `δ1 / AbsRel` on the pool's own evaluation sets, filled in from each cell's evaluation file as it
-finishes; a dash means not evaluated yet. Numbers come only from evaluation files — this repository's H200 runs,
-the v2 H200 runs imported cell-for-cell by `05_import_legacy.py` (provenance in `tables/import_legacy_*.md`), and
-the teacher's recorded outputs in `ref/` (pre-registration: the decision rule of `32_decide.py` is applied per
+finishes; a dash means not evaluated yet. Numbers come only from evaluation files — this repository's H200 runs
+and the teacher's recorded outputs in `ref/` (pre-registration: the decision rule of `32_decide.py` is applied per
 budget row; equal-budget claims must also exceed the B = 400 noise floor below). **`soft` and `hard` are both pseudo-label losses (`Loss_pseudo`)** — hard is CE on the
 teacher's answer, soft is KL to the teacher's digit distribution; neither uses ground truth.
 **The † rows are `Loss_gt + Loss_pseudo`**, trained alongside the pure arms in the same cells, and the pseudo term
@@ -77,7 +79,7 @@ dropped from the grid for now (re-added later by the fixed rule if needed).
 
 | Budget | N | k | Loss | iBims-1 | NYUv2 |
 |---:|---:|---:|:--|:--|:--|
-| **400** | 400 | 1 | soft | 0.322 / 0.364 | 0.403 / 0.307 |
+| **400** | 400 | 1 | soft | — | — |
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
@@ -89,11 +91,11 @@ dropped from the grid for now (re-added later by the fixed rule if needed).
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
-| **1,600** | 1600 | 1 | soft | 0.461 / 0.297 | 0.539 / 0.252 |
+| **1,600** | 1600 | 1 | soft | — | — |
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
-| | 400 | 4 | soft | 0.467 / 0.293 | 0.564 / 0.246 |
+| | 400 | 4 | soft | — | — |
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
@@ -101,15 +103,15 @@ dropped from the grid for now (re-added later by the fixed rule if needed).
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
-| **6,400** | 6400 | 1 | soft | 0.602 / 0.216 | 0.724 / 0.181 |
+| **6,400** | 6400 | 1 | soft | — | — |
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
-| | 1600 | 4 | soft | 0.596 / 0.218 | 0.730 / 0.180 |
+| | 1600 | 4 | soft | — | — |
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
-| | 400 | 16 | soft | 0.600 / 0.217 | 0.703 / 0.189 |
+| | 400 | 16 | soft | — | — |
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
@@ -231,6 +233,24 @@ must exceed it before it counts as a claim (`32_decide.py --floor`).
 | Label decimals (C-3c) | hard, 1 vs 2 decimals, same subset | fixed subset, re-labeled to 2 decimals | — |
 | Recipe-mix (C-4d) | uniform mixed vs per-domain optimal recipes | gate: ≥1 claim in a domain grid | — |
 
+### v2 pipeline, kept for comparison only — indoor soft, seed 0, same pixels
+
+The v2 students were trained with a different question (`… Answer with only a number, for example 2.35.`), answered
+the bare number, and — because the processor's `mm_token_type_ids` was not passed during training — saw 1-D instead
+of 3-D image positions in training while being evaluated with 3-D positions (NOTES V-8, V-9). These six cells are the
+same rows, labels and seed as the v3 cells, so once the v3 cell exists the difference measures **both fixes together**
+(it cannot separate them). v2 answered "2.3" on 27–34 % of the evaluation pixels at B ≤ 1,600, against 7 % for the
+teacher on the same pixels (`tables/v2_legacy/`).
+
+| Cell | v2 iBims-1 | v2 NYUv2 | v3 iBims-1 | v3 NYUv2 |
+|:--|:--|:--|:--|:--|
+| B400_k1 | 0.322 / 0.364 | 0.403 / 0.307 | — | — |
+| B1600_k1 | 0.461 / 0.297 | 0.539 / 0.252 | — | — |
+| B1600_k4 | 0.467 / 0.293 | 0.564 / 0.246 | — | — |
+| B6400_k1 | 0.602 / 0.216 | 0.724 / 0.181 | — | — |
+| B6400_k4 | 0.596 / 0.218 | 0.730 / 0.180 | — | — |
+| B6400_k16 | 0.600 / 0.217 | 0.703 / 0.189 | — | — |
+
 ## Order of work
 
 All runs execute on H200: one job at a time on a whole GPU (quota `7`), submitted as a GitHub issue whose
@@ -243,30 +263,31 @@ being judged (≤ 0.03 in D-27). The saving comes from *what* is computed: main 
 including the uncertainty tree, while extra seeds and subset repeats get greedy-only evaluation (≈ 6× cheaper), which
 is all a spread needs.
 
-**Now running** (old repository): the v2 `grid indoor hard` job. Let it finish; its zip supplies 6 of the 9 indoor
-hard cells through `05_import_legacy.py`, exactly as the soft zip already did.
+**The v2 job still running on H200** (old repository, `grid indoor hard`) produces v2 results, which do not enter the
+grid. Stop it if the slot is needed; if it is nearly done, letting it finish only adds hard cells to the comparison
+table above.
 
-**Indoor submissions, in order** (estimates from the v2 H200 throughput, rough):
+**Indoor submissions, in order** (rough estimates from the v2 H200 throughput; the † arms train about 2× slower per
+step on indoor because 84 % of the rows carry a second, GT forward pass):
 
 | # | One-line command | Fills | Est. |
 |---:|:--|:--|--:|
 | 1 | `bash run.sh smoke` | checks the new checkout on H200 | 0.5 h |
 | 2 | `bash run.sh baseline mixed` | zero-shot row of all three tables (four sets, greedy) | 1 h |
-| 3 | `bash run.sh grid indoor soft CELLS=B400_k1,B400_k4,B400_k16 SEEDS=0,1,2 REPLICATES=1 SKIP=B400_k1` | B = 400 soft row + 2 extra seeds + 9 subset repeats (17 units; B400_k1 seed 0 is imported) | 6–9 h |
-| 4 | same as 3 with `hard` | B = 400 hard row + noise floor (needs the hard zip imported first) | 6–9 h |
-| 5 | `bash run.sh grid indoor soft CELLS=B1600_k16` | the last missing soft cell | 3 h |
-| 6 | `bash run.sh grid indoor hard CELLS=B1600_k16` | the last missing hard cell | 3 h |
-| 7 | `bash run.sh grid indoor gtsoft CELLS=B400_k1,B400_k4,B400_k16` | gt+soft †, B = 400 | 5–7 h |
-| 8 | `bash run.sh grid indoor gthard CELLS=B400_k1,B400_k4,B400_k16` | gt+hard †, B = 400 | 5–7 h |
-| 9–10 | as 7–8 with `CELLS=B1600_k1,B1600_k4,B1600_k16` | † rows, B = 1,600 | 6–8 h |
-| 11–12 | as 7–8 with `CELLS=B6400_k1,B6400_k4,B6400_k16` | † rows, B = 6,400 | 8–10 h |
+| 3 | `bash run.sh grid indoor soft CELLS=B400_k1,B400_k4,B400_k16 SEEDS=0,1,2 REPLICATES=1` | B = 400 soft row + 2 extra seeds + 9 subset repeats (18 units) | 5–8 h |
+| 4 | same as 3 with `hard` | B = 400 hard row; with 3, the indoor noise floor | 5–8 h |
+| 5 | `bash run.sh grid indoor soft CELLS=B1600_k1,B1600_k4,B1600_k16` | B = 1,600 soft row | 3–4 h |
+| 6 | same as 5 with `hard` | B = 1,600 hard row | 3–4 h |
+| 7 | `bash run.sh grid indoor soft CELLS=B6400_k1,B6400_k4,B6400_k16` | B = 6,400 soft row | 4–6 h |
+| 8 | same as 7 with `hard` | B = 6,400 hard row | 4–6 h |
+| 9–10 | `bash run.sh grid indoor gtsoft CELLS=B400_k1,B400_k4,B400_k16`, then `gthard` | † rows, B = 400 | 3–4 h |
+| 11–12 | as 9–10 with `CELLS=B1600_k1,B1600_k4,B1600_k16` | † rows, B = 1,600 | 3–5 h |
+| 13–14 | as 9–10 with `CELLS=B6400_k1,B6400_k4,B6400_k16` | † rows, B = 6,400 | 6–9 h |
 
-After each zip: import it, fill the table. After the indoor jobs: `33_noise_floor.py --pool indoor`, then
+After each zip: fill its rows. After the indoor jobs: `33_noise_floor.py --pool indoor`, then
 `32_decide.py --pool indoor --floor results/tables/noise_floor_indoor.json` gives the indoor verdict.
 
-**Then driving (`outdoor`), then mixed**, same pattern. Driving has no legacy runs, so its soft/hard rows run in
-full: B = 400 as in 3–4 without `SKIP`, then `CELLS=B1600_k1,B1600_k4,B1600_k16` and `CELLS=B6400_k1,B6400_k4,B6400_k16`
-for each loss, then the † rows. For mixed, the local v5 mixed cells are imported where they match before submitting.
+**Then driving (`outdoor`), then mixed**, the same fourteen-job pattern (after the one-time smoke and baseline).
 
 **Last, the side experiments**, each after what it depends on: W1 pilot (needs its cell's KL result), 1-vs-2-decimal
 ablation (needs a 2-decimal re-label of a fixed subset), GT-only reference (needs the grid optimum), recipe-mix (needs

@@ -8,13 +8,13 @@ from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration, Dyna
 from peft import PeftModel
 from sklearn.metrics import roc_auc_score
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from depthlm_uncertainty.depthlm_data import DepthLMJsonl, draw_marker
+from depthlm_uncertainty.depthlm_data import DepthLMJsonl, draw_marker, build_problem_prompt
 from depthlm_uncertainty.number_distribution import enumerate_number_distribution, _is_numeric_token
 from depthlm_uncertainty.uq_metrics import compute_aucs
 from depthlm_uncertainty.metrics import _FLOAT_RE
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))); MODEL = os.environ.get("STUDENT_MODEL", "Qwen/Qwen2.5-VL-3B-Instruct")
-PROMPT = ("The red arrow in the image points at a specific location. Estimate the distance from the camera to that location in meters. "
-          "Answer with only a number, for example 2.35.")
+PROMPT = build_problem_prompt()                # DepthLM 공식 질의 — 교사·학습과 동일 (V-8)
+TEMPLATE = "<think> The point is around "     # 교사 라벨링·학생 학습과 같은 템플릿을 채운 뒤 숫자를 읽는다
 def resolve(p): p = os.path.expandvars(os.path.expanduser(p)); return p if os.path.isabs(p) else os.path.join(ROOT, p)
 LEGACY = ("ibims1", "nyuv2", "eth3d")   # ref/dist_*·ref/tree_px_* 로 픽셀을 고르는 기존 세트
 
@@ -38,6 +38,7 @@ def main():
     ap.add_argument("--greedy_only", action="store_true", help="greedy 복호만 (분포 트리·CoV 생략, ≈6배 저렴) — 반복 셀·추가 시드의 산포 추정용 (V-3)"); args = ap.parse_args()
     dev = args.device; is_cuda = dev.startswith("cuda")
     proc = AutoProcessor.from_pretrained(MODEL); tok = proc.tokenizer
+    TM = torch.tensor(tok(TEMPLATE, add_special_tokens=False)["input_ids"], dtype=torch.long, device=dev)   # 채워 넣는 템플릿 토큰
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(MODEL, dtype=torch.bfloat16, attn_implementation="sdpa", device_map=dev)
     if args.adapter: model = PeftModel.from_pretrained(model, os.path.expanduser(args.adapter)).merge_and_unload()
     model.eval(); rows = []; names = [x for x in args.datasets.split(",") if x]; legacy_out = names == list(LEGACY)
@@ -64,6 +65,10 @@ def main():
             msgs = [{"role": "user", "content": [{"type": "image", "image": im}, {"type": "text", "text": PROMPT}]}]
             enc = proc.apply_chat_template([msgs], add_generation_prompt=True, tokenize=True, return_dict=True, return_tensors="pt")
             inputs = {k: (torch.as_tensor(v).to(dev, dtype=torch.bfloat16) if k == "pixel_values" else torch.as_tensor(v).to(dev, dtype=torch.long)) for k, v in enc.items()}
+            # 템플릿을 입력 끝에 붙인다. 토큰별 보조 입력도 같이 늘린다 — mm_token_type_ids 가 없으면 Qwen2.5-VL 이 이미지의
+            # 3차원 위치(M-RoPE)를 못 만들고 1차원 순번으로 떨어진다 (V-9, 학습과 같은 입력 구성)
+            inputs["input_ids"] = torch.cat([inputs["input_ids"], TM[None]], 1); inputs["attention_mask"] = torch.ones_like(inputs["input_ids"])
+            if "mm_token_type_ids" in inputs: inputs["mm_token_type_ids"] = torch.cat([inputs["mm_token_type_ids"], torch.zeros_like(TM)[None]], 1)
             is_cuda and torch.cuda.synchronize(); t1 = time.time(); val = decode(model, tok, inputs); is_cuda and torch.cuda.synchronize(); t_dec = time.time() - t1
             nd = None if args.greedy_only else enumerate_number_distribution(model, tok, inputs, torch.tensor([], dtype=torch.long), min_branch_p=0.005, chunk=chunk, stop_first_decimal=(args.decimals == 1), max_depth=6)
             rows.append({"dataset": name, "image_id": s.image_id, "pixel_index": j, "gt": s.depth_gt, "pred": val, "pred_mid": (val + 0.5 * 10 ** (-args.decimals)) if val == val else val,

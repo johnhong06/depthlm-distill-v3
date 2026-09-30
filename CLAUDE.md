@@ -59,6 +59,7 @@ hard 1자리 vs 2자리 소형 ablation 은 실행해 공백을 닫는다 (`20_t
 |---|---|
 | 교사 | `facebook/DepthLM` (Pixtral-12B), 초점 750, 마커, 템플릿 prefill, 소수 첫째 자리 트리(질량 ≈0.99) |
 | 학생 | Qwen2.5-VL-3B-Instruct, LoRA r16 α32 q/k/v/o, AdamW lr 1e-4 cosine, bs 1, accum 8, 2 epoch, 시드 고정, 입력 초점 750 |
+| 학생 입출력 | **교사와 같은 DepthLM 공식 형식** (V-8): 공식 질의 → 템플릿 `<think> The point is around ` 채움 → 숫자(소수 첫째) + ` meters`. 손실은 숫자·종료 토큰에만. 학습·평가 모두 `mm_token_type_ids` 를 넘겨 이미지 3차원 위치(M-RoPE) 사용 (V-9 — 빠지면 조용히 1차원 위치로 떨어진다) |
 | 평가 지표 | δ1 = max(pred/gt, gt/pred) < 1.25 (공식 `third_party` metrics 와 동일 확인, C-4a) / AbsRel 보조 |
 | 평가 세트 | iBims-1 · NYUv2 (실내), DDAD · nuScenes mini (주행), ETH3D (held-out). 원문 8개의 진부분집합, 사유는 C-4b |
 | 평가 원칙 | 각 풀은 자기 도메인 세트로만 (교차 도메인은 도메인 갭을 측정하므로 계산하지 않음) |
@@ -69,7 +70,8 @@ hard 1자리 vs 2자리 소형 ablation 은 실행해 공백을 닫는다 (`20_t
 - **풀 (v5, 옛 저장소에서 그대로 복사, 재구축 금지)**: indoor(SUN RGB-D·NYUv2) / outdoor(KITTI) / mixed(50/50),
   각 6,400 장. 교사 라벨 44,800 px/풀 (+ gt 열) — **v3 격자(본 9셀 + 반복 12셀)는 전부 이 라벨 안, 새 질의 0**
   (`experiments/03_build_cells_v3.py` 실행 로그로 검증됨, `pools/<pool>/cells_v3.json`).
-- **옛 격자 결과 재사용**: 중첩 설계라 옛 (N,k) 셀 6개가 v3 (B,k) 셀과 학습 행이 같다 — `05_import_legacy.py` 로만 들여온다 (V-6).
+- **옛(v2) 학생 결과는 본 격자에 쓰지 않는다** (V-8·V-9: 다른 질의 문장 + 학습 중 1차원 이미지 위치). `05_import_legacy.py` 는
+  `results/v2_legacy/` 에만 넣고, README 의 v2 비교표(두 수정의 합친 효과)에만 쓴다. **교사 쪽 자산(라벨·자릿수 분포·교사 행)은 그대로 유효.**
 - **교사 행**: `ref/dist_*` 의 교사 기록에서 계산(`34_baselines.py`), 학생과 같은 픽셀·절사+0.05·유클리드 GT. H200 주행 팩과 픽셀 일치 확인 (V-7).
 - 풀 소스는 교사 학습 소스(Argoverse2·Waymo·nuScenes·ScanNet++·Taskonomy·HM3D·Matterport3D)와 무교집합 —
   "교사가 본 적 없는 이미지에서 질의만으로 증류" 성립 (C-4b).
@@ -82,10 +84,11 @@ hard 1자리 vs 2자리 소형 ablation 은 실행해 공백을 닫는다 (`20_t
 ```bash
 bash run.sh smoke                                   # 새 저장소 점검
 bash run.sh baseline mixed                          # zero-shot 행 (네 세트, greedy) + 교사 행
-bash run.sh grid indoor soft CELLS=B400_k1,B400_k4,B400_k16 SEEDS=0,1,2 REPLICATES=1 SKIP=B400_k1
+bash run.sh grid indoor soft CELLS=B400_k1,B400_k4,B400_k16 SEEDS=0,1,2 REPLICATES=1
 bash run.sh grid indoor gtsoft CELLS=B400_k1,B400_k4,B400_k16      # † arm
 ```
-결과 zip 을 받으면 로컬에서: `05_import_legacy.py`(옛 격자 zip 일 때) → 표 채움 → `33_noise_floor.py` → `32_decide.py --floor`.
+결과 zip 을 받으면 로컬에서: `results/` 에 풀기 → 표 채움 → `33_noise_floor.py` → `32_decide.py --floor`.
+옛(v2) 저장소 zip 은 `05_import_legacy.py` 로 `results/v2_legacy/` 에만 (비교표 전용).
 재현용 표는 `tables/` 에 복사해 커밋한다 (`results/` 는 git 밖).
 
 ## 남은 일 (NOTES 체크리스트와 동기)

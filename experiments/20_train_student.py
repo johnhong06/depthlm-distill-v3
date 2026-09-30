@@ -1,11 +1,14 @@
 """학생(Qwen2.5-VL-3B) LoRA 증류 — 조건별 손실 (v3: C-3b·V-4 의 † arm 추가).
-  A hard  : CE(교사 greedy1 문자열 + EOS)
-  B soft  : 교사 greedy 경로 위 각 접두사에서 numeric 토큰+종료 분포와의 KL (teacher forcing), 마지막(소수 첫째 자리 뒤)은 EOS 로 CE
+  A hard  : CE(교사 greedy1 숫자 + 종료 토큰 " meters")
+  B soft  : 교사 greedy 경로 위 각 접두사에서 numeric 토큰+종료 분포와의 KL (teacher forcing), 마지막(소수 첫째 자리 뒤)은 종료 토큰으로 CE
   C wsoft : B × w_i, w_i = clip(1 − cov_i/0.3, 0.2, 1) 을 평균 1 로 정규화 (사전 고정)
-  D gt    : CE(GT 소수 첫째 자리 + EOS), GT 있는 행만 (참조 상한선)
+  D gt    : CE(GT 소수 첫째 자리 + 종료 토큰), GT 있는 행만 (참조 상한선)
   gthard  : GT 있는 행은 (1−λ)·CE(교사 답) + λ·CE(GT), 없는 행은 CE(교사 답). λ = 0.1 (고전 KD [arXiv:1503.02531], V-4)
   gtsoft  : GT 있는 행은 (1−λ)·KL(교사 분포) + λ·CE(GT), 없는 행은 KL. λ 동일. GT 는 예산 밖 추가 정보 († arm, 절대 규칙 1)
-공통: 같은 행 순서·시드·LoRA(r16, q/k/v/o)·lr 1e-4 cosine·grad accumulation 8·epoch 수. 학생 입력은 DepthLM 마커 이미지 f'=500 + 고정 프롬프트, 출력은 숫자(소수 첫째 자리)+EOS.
+공통: 같은 행 순서·시드·LoRA(r16, q/k/v/o)·lr 1e-4 cosine·grad accumulation 8·epoch 수.
+학생 입출력 = 교사와 같은 DepthLM 공식 형식 (V-8): 마커 이미지 f'=750 + 공식 질의, 답은 교사 라벨링과 같은 템플릿
+"<think> The point is around " 을 채운 뒤 숫자(소수 첫째 자리) + " meters". 손실은 숫자와 종료 토큰에만 — 교사 자릿수 분포
+(kd_nodes)가 바로 이 조건부(같은 질의·같은 템플릿 뒤의 숫자)에서 읽은 것이므로 학생도 같은 조건부를 배운다.
 """
 from __future__ import annotations
 import argparse, json, math, os, sys, time, random
@@ -14,10 +17,11 @@ import numpy as np, pandas as pd, torch, yaml
 from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration, get_cosine_schedule_with_warmup
 from peft import LoraConfig, get_peft_model, PeftModel
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from depthlm_uncertainty.depthlm_data import DepthLMJsonl, draw_marker
+from depthlm_uncertainty.depthlm_data import DepthLMJsonl, draw_marker, build_problem_prompt
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))); MODEL = os.environ.get("STUDENT_MODEL", "Qwen/Qwen2.5-VL-3B-Instruct")
-PROMPT = ("The red arrow in the image points at a specific location. Estimate the distance from the camera to that location in meters. "
-          "Answer with only a number, for example 2.35.")
+PROMPT = build_problem_prompt()                # DepthLM 공식 질의 (교사와 동일, V-8). 옛 학생 질의의 "for example 2.35" 가 답을 2.3 으로 끌어당겼다
+TEMPLATE = "<think> The point is around "     # 교사 라벨링(11_label_teacher.py)과 같은 템플릿 — 채워 넣고 숫자만 답한다
+STOP = " meters"                               # 숫자 다음 토큰 = 종료 표시 (Qwen 토큰 하나)
 STUDENT_FOCAL = 750.0   # 학생 입력 정규화 초점거리. 교사(750)와 동일 = 해상도 교란 제거 (2026-09-22 사용자 지적). --focal 로 변경 가능
 DTYPE = torch.bfloat16
 def resolve(p): p = os.path.expandvars(os.path.expanduser(p)); return p if os.path.isabs(p) else os.path.join(ROOT, p)
@@ -42,10 +46,14 @@ class Data:
 
 def build(proc, im, answer, dev):
     msgs = [{"role": "user", "content": [{"type": "image", "image": im}, {"type": "text", "text": PROMPT}]}]
-    pre = proc.apply_chat_template([msgs], add_generation_prompt=True, tokenize=True, return_dict=True, return_tensors="pt"); P = pre["input_ids"].shape[1]
-    ans_ids = proc.tokenizer(answer, add_special_tokens=False)["input_ids"] + [proc.tokenizer.convert_tokens_to_ids("<|im_end|>")]
-    ids = torch.cat([pre["input_ids"], torch.tensor([ans_ids])], 1); am = torch.ones_like(ids)
+    pre = proc.apply_chat_template([msgs], add_generation_prompt=True, tokenize=True, return_dict=True, return_tensors="pt")
+    tmpl = proc.tokenizer(TEMPLATE, add_special_tokens=False)["input_ids"]          # 채워 넣는 템플릿 (손실 없음)
+    P = pre["input_ids"].shape[1] + len(tmpl)                                       # 답(숫자) 시작 위치
+    ans_ids = proc.tokenizer(answer, add_special_tokens=False)["input_ids"] + proc.tokenizer(STOP, add_special_tokens=False)["input_ids"][:1]
+    ids = torch.cat([pre["input_ids"], torch.tensor([tmpl + ans_ids])], 1); am = torch.ones_like(ids)
     enc = {"input_ids": ids.to(dev), "attention_mask": am.to(dev), "pixel_values": torch.as_tensor(pre["pixel_values"]).to(dev, dtype=DTYPE), "image_grid_thw": torch.as_tensor(pre["image_grid_thw"]).to(dev)}
+    if "mm_token_type_ids" in pre:   # 없으면 Qwen2.5-VL 이 이미지 3차원 위치(M-RoPE)를 못 만들고 1차원 순번으로 학습된다 (V-9). 템플릿·답은 텍스트 = 0
+        enc["mm_token_type_ids"] = torch.cat([torch.as_tensor(pre["mm_token_type_ids"]), torch.zeros(1, len(tmpl) + len(ans_ids), dtype=torch.long)], 1).to(dev)
     return enc, P, ans_ids
 
 def main():
@@ -65,7 +73,7 @@ def main():
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(MODEL, dtype=DT, attn_implementation="sdpa", device_map=dev)
     model.gradient_checkpointing_enable(); model.enable_input_require_grads()
     model = get_peft_model(model, LoraConfig(r=16, lora_alpha=32, lora_dropout=0.05, target_modules=["q_proj", "k_proj", "v_proj", "o_proj"], task_type="CAUSAL_LM")); model.print_trainable_parameters()
-    num_ids = [tok.convert_tokens_to_ids(str(d)) for d in range(10)] + [tok.convert_tokens_to_ids(".")]; eos = tok.convert_tokens_to_ids("<|im_end|>"); sup = torch.tensor(num_ids + [eos], device=dev)
+    num_ids = [tok.convert_tokens_to_ids(str(d)) for d in range(10)] + [tok.convert_tokens_to_ids(".")]; eos = tok(STOP, add_special_tokens=False)["input_ids"][0]; sup = torch.tensor(num_ids + [eos], device=dev)   # 종료 클래스 = " meters" (교사 end_mass 도 숫자 뒤 비숫자 토큰 질량)
     tokstr = {tok.convert_tokens_to_ids(str(d)): str(d) for d in range(10)}; tokstr[tok.convert_tokens_to_ids(".")] = "."; str2id = {v: k for k, v in tokstr.items()}
     total = int(len(data.rows) * args.epochs) if not args.steps else args.steps; opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr, weight_decay=0.0)
     sch = get_cosine_schedule_with_warmup(opt, num_warmup_steps=max(1, min(100, total // args.accum // 20)), num_training_steps=max(1, total // args.accum))
