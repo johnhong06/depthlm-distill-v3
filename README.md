@@ -42,3 +42,139 @@ paper/design_v3_corrections.md     the C-1..C-4 design decisions with evidence (
 
 Registered 2026-09-30. Grid rows and replicate cells generated and verified for all three pools; training runs not
 started. `run.sh` still targets the old grid and must not be used until updated (see NOTES.md checklist).
+
+## Results
+
+Every cell is `δ1 / AbsRel` on the pool's own evaluation sets, filled in from each cell's evaluation log as it
+finishes; a dash means not evaluated yet. Numbers are taken only from logs of this repository (pre-registration:
+the decision rule of `32_decide.py` is applied per budget row; equal-budget claims must also exceed the B = 400
+replicate spread below). The `teacher` row is DepthLM 12B evaluated once on the same pixels with the same midpoint
+decoding; `student zero-shot` is the untrained student. Both are baselines, not cells, and carry no loss condition.
+
+### Indoor pool — evaluated on iBims-1, NYUv2
+
+| Budget | N | k | Loss | iBims-1 | NYUv2 |
+|---:|---:|---:|:--|:--|:--|
+| **400** | 400 | 1 | soft | — | — |
+| | | | hard | — | — |
+| | 100 | 4 | soft | — | — |
+| | | | hard | — | — |
+| | 25 | 16 | soft | — | — |
+| | | | hard | — | — |
+| **1,600** | 1600 | 1 | soft | — | — |
+| | | | hard | — | — |
+| | 400 | 4 | soft | — | — |
+| | | | hard | — | — |
+| | 100 | 16 | soft | — | — |
+| | | | hard | — | — |
+| **6,400** | 6400 | 1 | soft | — | — |
+| | | | hard | — | — |
+| | 1600 | 4 | soft | — | — |
+| | | | hard | — | — |
+| | 400 | 16 | soft | — | — |
+| | | | hard | — | — |
+| **25,600** | 6400 | 4 | soft | — | — |
+| | | | hard | — | — |
+| | 1600 | 16 | soft | — | — |
+| | | | hard | — | — |
+| | | | teacher | — | — |
+| | | | student zero-shot | — | — |
+
+### Driving pool — evaluated on DDAD, nuScenes (mini)
+
+| Budget | N | k | Loss | DDAD | nuScenes |
+|---:|---:|---:|:--|:--|:--|
+| **400** | 400 | 1 | soft | — | — |
+| | | | hard | — | — |
+| | 100 | 4 | soft | — | — |
+| | | | hard | — | — |
+| | 25 | 16 | soft | — | — |
+| | | | hard | — | — |
+| **1,600** | 1600 | 1 | soft | — | — |
+| | | | hard | — | — |
+| | 400 | 4 | soft | — | — |
+| | | | hard | — | — |
+| | 100 | 16 | soft | — | — |
+| | | | hard | — | — |
+| **6,400** | 6400 | 1 | soft | — | — |
+| | | | hard | — | — |
+| | 1600 | 4 | soft | — | — |
+| | | | hard | — | — |
+| | 400 | 16 | soft | — | — |
+| | | | hard | — | — |
+| **25,600** | 6400 | 4 | soft | — | — |
+| | | | hard | — | — |
+| | 1600 | 16 | soft | — | — |
+| | | | hard | — | — |
+| | | | teacher | — | — |
+| | | | student zero-shot | — | — |
+
+### Mixed pool (indoor 50 / driving 50) — evaluated on all four sets
+
+| Budget | N | k | Loss | iBims-1 | NYUv2 | DDAD | nuScenes |
+|---:|---:|---:|:--|:--|:--|:--|:--|
+| **400** | 400 | 1 | soft | — | — | — | — |
+| | | | hard | — | — | — | — |
+| | 100 | 4 | soft | — | — | — | — |
+| | | | hard | — | — | — | — |
+| | 25 | 16 | soft | — | — | — | — |
+| | | | hard | — | — | — | — |
+| **1,600** | 1600 | 1 | soft | — | — | — | — |
+| | | | hard | — | — | — | — |
+| | 400 | 4 | soft | — | — | — | — |
+| | | | hard | — | — | — | — |
+| | 100 | 16 | soft | — | — | — | — |
+| | | | hard | — | — | — | — |
+| **6,400** | 6400 | 1 | soft | — | — | — | — |
+| | | | hard | — | — | — | — |
+| | 1600 | 4 | soft | — | — | — | — |
+| | | | hard | — | — | — | — |
+| | 400 | 16 | soft | — | — | — | — |
+| | | | hard | — | — | — | — |
+| **25,600** | 6400 | 4 | soft | — | — | — | — |
+| | | | hard | — | — | — | — |
+| | 1600 | 16 | soft | — | — | — | — |
+| | | | hard | — | — | — | — |
+| | | | teacher | — | — | — | — |
+| | | | student zero-shot | — | — | — | — |
+
+### Noise floor — B = 400 replicate cells (δ1 spread across 4 replicates, per set)
+
+Replicates re-draw the training subset inside the existing labels (image blocks for N = 25 / N = 100, pixel indices
+for N = 400). The spread (max − min of δ1 over the 4 replicates) is the floor an equal-budget difference must exceed.
+
+| Pool | Arm | Replicates | Loss | Spread per set |
+|:--|:--|:--|:--|:--|
+| indoor | N=25 k=16 | image blocks ×4 | soft / hard | — |
+| indoor | N=100 k=4 | image blocks ×4 | soft / hard | — |
+| indoor | N=400 k=1 | pixel indices ×4 | soft / hard | — |
+| driving | N=25 k=16 | image blocks ×4 | soft / hard | — |
+| driving | N=100 k=4 | image blocks ×4 | soft / hard | — |
+| driving | N=400 k=1 | pixel indices ×4 | soft / hard | — |
+| mixed | N=25 k=16 | image blocks ×4 | soft / hard | — |
+| mixed | N=100 k=4 | image blocks ×4 | soft / hard | — |
+| mixed | N=400 k=1 | pixel indices ×4 | soft / hard | — |
+
+### Side experiments (each gated, reported separately from the main grid)
+
+| Experiment | Condition | Cell / subset | Result |
+|:--|:--|:--|:--|
+| W1 pilot (C-3a) | value-space W1 vs soft KL, same cell | to be pre-registered before running | — |
+| GT + pseudo arm (C-3b) | Loss_gt + Loss_pseudo, budget-external GT | λ, GT source, cell: to be fixed before running | — |
+| Label decimals (C-3c) | hard, 1 vs 2 decimals, same subset | fixed subset, re-labeled to 2 decimals | — |
+| Recipe-mix (C-4d) | uniform mixed vs per-domain optimal recipes | gate: ≥1 claim in a domain grid | — |
+
+## Order of work
+
+1. **Prerequisites (local)**: update `31_grid.py` / `32_decide.py` comparison lists to the v3 budget rows; update
+   `run.sh` to `cells_v3.json` / `rows_B*` / `rep_*`; smoke-test one tiny cell locally.
+2. **Baselines (local)**: teacher on all four evaluation sets (same pixels, midpoint decoding) and the zero-shot
+   student — fills the two baseline rows of every table and anchors the teacher-accuracy ceiling.
+3. **B = 400 row first, all pools** (H200; cheapest, 3 arms × soft/hard × ≥3 seeds + the 12 replicate cells per
+   pool): establishes the noise floor before any larger budget is interpreted.
+4. **B = 1,600 → 6,400 → 25,600** per pool on H200, one job per GPU, in the order indoor → driving → mixed;
+   evaluate each cell on the pool's own sets as it finishes and fill the table.
+5. **Decide per pool** (`32_decide.py`): apply the pre-registered rule per budget row; claims only where the CI
+   excludes zero on all of the pool's sets and the difference exceeds the noise floor.
+6. **Side experiments** after the main rows they depend on: W1 pilot (needs its cell's KL result), decimals
+   ablation (needs the 2-decimal re-label), GT+pseudo arm (needs the grid optimum), recipe-mix (needs domain claims).
