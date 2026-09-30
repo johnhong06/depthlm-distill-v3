@@ -71,7 +71,8 @@ def main():
             if "mm_token_type_ids" in inputs: inputs["mm_token_type_ids"] = torch.cat([inputs["mm_token_type_ids"], torch.zeros_like(TM)[None]], 1)
             is_cuda and torch.cuda.synchronize(); t1 = time.time(); val = decode(model, tok, inputs); is_cuda and torch.cuda.synchronize(); t_dec = time.time() - t1
             nd = None if args.greedy_only else enumerate_number_distribution(model, tok, inputs, torch.tensor([], dtype=torch.long), min_branch_p=0.005, chunk=chunk, stop_first_decimal=(args.decimals == 1), max_depth=6)
-            rows.append({"dataset": name, "image_id": s.image_id, "pixel_index": j, "gt": s.depth_gt, "pred": val, "pred_mid": (np.floor(val * 10 ** args.decimals + 1e-4) / 10 ** args.decimals + 0.5 * 10 ** (-args.decimals)) if val == val else val,   # 절사 후 중간값 (교사 행과 같은 규약, V-12)
+            dz = ds.records[i].get("depth_z")   # 주행 세트만: 논문(DepthLM 주행 스크립트) 방식의 z 깊이 — 논문 수치 비교용 보조 열, 판정은 유클리드 gt
+            rows.append({"dataset": name, "image_id": s.image_id, "pixel_index": j, "gt": s.depth_gt, "gt_z": float(dz[j]) if isinstance(dz, (list, tuple, np.ndarray)) and j < len(dz) else np.nan, "pred": val, "pred_mid": (np.floor(val * 10 ** args.decimals + 1e-4) / 10 ** args.decimals + 0.5 * 10 ** (-args.decimals)) if val == val else val,   # 절사 후 중간값 (교사 행과 같은 규약, V-12)
                          "cov": np.nan if nd is None else nd.stats()["dist_cov"], "ev": np.nan if nd is None else nd.expected_value(), "mass": np.nan if nd is None else nd.covered_mass, "sec_decode": t_dec}); n += 1; del inputs
         print(f"{name}: {n} px, {(time.time()-t0)/max(n,1):.2f} s/px", flush=True)
         if not legacy_out: pd.DataFrame(rows[n0:]).to_parquet(per, index=False)   # 데이터셋이 끝날 때마다 저장 (중간에 끊겨도 끝난 세트는 남는다)

@@ -61,12 +61,14 @@ def main():
             ks.append(i)
         return len(ks)
     Ns = sorted({N for N, _ in cells})
+    scenes = lambda rs, N: len({r["scene"] for r in rs[:N]})   # 아래 보고 문자열을 파이썬 3.10 에서도 쓸 수 있게 밖으로 뺀 계산
+    doms = lambda N: {k: int(v) for k, v in pd.Series([r["domain"] for r in nrec[:N]]).value_counts().items()}
     md = [f"# 풀 v5: 거의 같은 이미지를 순서 뒤로 ({a.pool}, 2026-09-29)", "",
           f"- 규칙: dHash 해밍 ≤ {a.ham} 이고 32×32 회색조 상관 > {a.corr} 인 이미지가 이미 남긴 이미지 중에 있으면 뒤로 (`experiments/07_dedup_pool_order.py`)",
           f"- 뒤로 보낸 이미지 {len(moved)}장, 소스별 {src.iloc[moved].value_counts().to_dict()}",
           f"- 서로 다른 이미지 수 (앞 N 장 안): 전 {{{', '.join(f'N{N}: {distinct(list(range(len(recs))), N)}' for N in Ns)}}} → 후 {{{', '.join(f'N{N}: {distinct(new, N)}' for N in Ns)}}}",
-          f"- 장면 라벨 수 (앞 N 장): 전 {{{', '.join(f'N{N}: {len({r['scene'] for r in recs[:N]})}' for N in Ns)}}} → 후 {{{', '.join(f'N{N}: {len({r['scene'] for r in nrec[:N]})}' for N in Ns)}}}",
-          f"- 도메인 비율 (앞 N 장, 전 = 후): {{{', '.join(f'N{N}: { {k: int(v) for k, v in pd.Series([r["domain"] for r in nrec[:N]]).value_counts().items()} }' for N in Ns)}}}",
+          f"- 장면 라벨 수 (앞 N 장): 전 {{{', '.join(f'N{N}: {scenes(recs, N)}' for N in Ns)}}} → 후 {{{', '.join(f'N{N}: {scenes(nrec, N)}' for N in Ns)}}}",
+          f"- 도메인 비율 (앞 N 장, 전 = 후): {{{', '.join(f'N{N}: {doms(N)}' for N in Ns)}}}",
           f"- 소스 구성 (앞 1600 장): 전 {src.iloc[:1600].value_counts().to_dict()} → 후 {nsrc.iloc[:1600].value_counts().to_dict()}",
           f"- 필요한 라벨 {len(todo)} px 중 기존 라벨에 없는 {len(need)} px → `bash run.sh label {a.pool}` 가 이것만 라벨링한다",
           "", "뒤로 보낸 이미지와 짝(처음 20개):", ""] + [f"- `{recs[i]['image']}` ≈ `{recs[match[i]]['image']}`" for i in moved[:20]]

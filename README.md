@@ -26,6 +26,30 @@ tested: fixed budget, noisy pseudo-labels, and a small LoRA student. The allocat
 **distinct images, not "scene diversity"**: scene labels are capture metadata and cannot prove distinctness,
 so scene counts are reported as descriptive statistics only.
 
+## Comparability with DepthLM
+
+**Identical to the official code.**
+- Image preprocessing: the official `undistort_image` and `normalizing_focal_length` are imported from `third_party/`, with a unified focal length of 750 (the 12B teacher's setting; DepthLM's own 3B/7B used 1,000).
+- Marker: the same red arrow, a 5-px shaft plus head, as in the official evaluation dataset.
+- Prompt and answer: the student gets the official question (`generate_prompt_depth_sft`) and answers after the official template `<think> The point is around `.
+- Metric: δ1 = max(pred/gt, gt/pred) < 1.25, as in the official `metrics.py`.
+- Mixing: the mixed pool is 50/50 indoor/driving, matching DepthLM's ≈ 49 % driving.
+
+**Deliberate differences.**
+- Distance definition: every set is scored against Euclidean distance. The official indoor scripts use Euclidean distance and the official driving scripts use z-depth; z is kept for paper comparisons (`gt_z` in the evaluation files, `ground_truth_z` in `ref/`).
+- Resolution: one decimal plus midpoint decoding, where the paper uses two decimals. This costs the teacher ≤ 0.006 δ1 (D-75), and the 1-vs-2-decimal ablation is planned.
+- Loss: on the number tokens only, with the template filled in; the paper uses CE on the whole answer.
+- Training setup: no random-crop augmentation, and LoRA on a 3B student.
+- Supervision and scale: ≤ 6,400 teacher-labelled pixels, against 16 M GT images in the paper.
+
+**Where a comparison is fair.**
+- **Student against teacher on identical pixels** is the primary comparison, i.e. how much of the teacher transfers.
+- **Our teacher against the paper's public Pixtral-12B row**:
+  - Matches (z-depth): DDAD 0.676 against 0.670, and nuScenes 0.802 against 0.819, inside the scene-cluster CI.
+  - Matches: ETH3D 0.647 (two-decimal answers) against 0.653.
+  - Does not match: iBims-1 0.809 against 0.870, not explained. Our NYUv2 set is our own 200-image curation from the labelled `.mat`, not the paper's images, so its 0.881 is not comparable to the paper's 0.799.
+- **DepthLM's 3B** (Qwen2.5-VL-3B, the same backbone, trained on GT with 16 M images) is a reference ceiling, not a like-for-like comparison.
+
 ## Layout
 
 ```
