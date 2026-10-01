@@ -64,6 +64,7 @@ experiments/21_eval_student.py     per-cell evaluation (full, or --greedy_only f
 experiments/31_grid.py, 32_decide.py   per-pool tables and the pre-registered decision rule (--floor = noise floor)
 experiments/33_noise_floor.py      B = 400 spread over subsets and seeds → noise_floor_<pool>.json
 experiments/34_baselines.py        teacher row (from recorded teacher outputs in ref/) + zero-shot row
+experiments/35_answer_diag.py      per run: answer spread, "2.3" share, Spearman ρ, global scale error (descriptive, not the rule)
 pools/<pool>/                      pool.jsonl (v5 order), teacher_labels.parquet (+ gt), rows_B*_k*.parquet, rep_*.parquet, cells_v3.json, gt_coverage.md
 tables/                            committed copies of the tables behind the numbers below
 third_party/DepthLM_Official/      official curation/metric utilities (FAIR NC — see LICENSE, NOTICE)
@@ -77,6 +78,9 @@ full `run.sh` pipeline). Teacher rows filled for all four evaluation sets. The s
 official input/output format and correct image positions (NOTES V-8, V-9), so **no v2 student result enters the
 grid**; the six v2 indoor soft cells are kept only as a comparison table below. Next: H200 submissions in the order
 under [Order of work](#order-of-work).
+
+2026-10-01: indoor soft B = 400 row done (#868) with its seeds and subset repeats. The equal-budget differences sit
+below the noise floor, so there is no claim yet. Indoor hard B = 400 is running.
 
 ## Results
 
@@ -143,6 +147,16 @@ dropped from the grid for now (re-added later by the fixed rule if needed).
 | | | | gt+hard † | — | — |
 | | | | teacher | 0.809 / 0.143 | 0.881 / 0.125 |
 | | | | student zero-shot | 0.054 / 0.592 | 0.060 / 0.566 |
+
+**Indoor verdicts so far** (`32_decide.py --floor`, `tables/decision_indoor.md`). B = 400 soft: k1 − k4 shows no
+evidence. k1 − k16 and k4 − k16 favour more pixels per image with CIs that exclude 0 on both sets (Δδ1 −0.041 / −0.093
+and −0.050 / −0.079), but every |Δ| is below the noise floor (0.093 / 0.176). The pre-registered verdict is therefore
+**weak evidence (below the floor), not a claim**. The main k = 16 cell is the best of its four 25-image draws on both
+sets; the other three score 0.272–0.318 / 0.291–0.368. Averaged over the four draws, the arms are level: k1 0.304 / 0.344,
+k4 0.321 / 0.368, k16 0.318 / 0.369. A descriptive diagnostic (`35_answer_diag.py`, not part of the rule) shows why. At
+this budget every student answers too short (median log(pred/gt) −0.12 to −0.40), and across the 18 runs δ1 follows that
+global scale error (correlation −0.98 / −0.99). The run-to-run spread is thus mostly about which images set the
+student's scale.
 
 ### Driving pool — evaluated on DDAD, nuScenes (mini)
 
@@ -240,15 +254,18 @@ must exceed it before it counts as a claim (`32_decide.py --floor`).
 
 | Pool | Arm | Subset spread (4 draws) | Seed spread (3 seeds) | Loss |
 |:--|:--|:--|:--|:--|
-| indoor | N=25 k=16 | — | — | soft / hard |
-| indoor | N=100 k=4 | — | — | soft / hard |
-| indoor | N=400 k=1 | — | — | soft / hard |
+| indoor | N=25 k=16 | soft 0.093 / 0.176 · hard — | soft 0.011 / 0.015 · hard — | soft / hard |
+| indoor | N=100 k=4 | soft 0.075 / 0.093 · hard — | soft 0.045 / 0.076 · hard — | soft / hard |
+| indoor | N=400 k=1 | soft 0.058 / 0.069 · hard — | soft 0.029 / 0.030 · hard — | soft / hard |
 | driving | N=25 k=16 | — | — | soft / hard |
 | driving | N=100 k=4 | — | — | soft / hard |
 | driving | N=400 k=1 | — | — | soft / hard |
 | mixed | N=25 k=16 | — | — | soft / hard |
 | mixed | N=100 k=4 | — | — | soft / hard |
 | mixed | N=400 k=1 | — | — | soft / hard |
+
+Values are iBims-1 / NYUv2 (driving: DDAD / nuScenes). Indoor floor with soft only: **0.093 / 0.176**, set by the
+N = 25 subset draws (`tables/noise_floor_indoor.md`). The final floor is the maximum over soft and hard.
 
 ### Side experiments (each gated, reported separately from the main grid)
 
@@ -266,7 +283,10 @@ the bare number, and — because the processor's `mm_token_type_ids` was not pas
 of 3-D image positions in training while being evaluated with 3-D positions (NOTES V-8, V-9). These six cells are the
 same rows, labels and seed as the v3 cells, so once the v3 cell exists the difference measures **both fixes together**
 (it cannot separate them). v2 answered "2.3" on 27–34 % of the evaluation pixels at B ≤ 1,600, against 7 % for the
-teacher on the same pixels (`tables/v2_legacy/`).
+teacher on the same pixels (`tables/v2_legacy/`). The v3 students never see that example, yet they answer "2.3" as
+often (B400_k1: 29 % / 34 %; 6–39 % across the 18 B = 400 runs), so the example in the v2 question was not the cause.
+At B400_k1, v3 ranks depth better than v2 (Spearman ρ 0.581 / 0.547 against 0.556 / 0.443). Its lower NYUv2 δ1 comes
+from a larger global scale error (median log(pred/gt) −0.234 against −0.173; `tables/answer_diag_indoor_soft.md`).
 
 | Cell | v2 iBims-1 | v2 NYUv2 | v3 iBims-1 | v3 NYUv2 |
 |:--|:--|:--|:--|:--|
@@ -300,8 +320,8 @@ step on indoor because 84 % of the rows carry a second, GT forward pass):
 |---:|:--|:--|--:|
 | 1 | `bash run.sh smoke` | checks the new checkout on H200 | 0.5 h |
 | 2 | `bash run.sh baseline mixed` | zero-shot row of all three tables (four sets, greedy) | 1 h |
-| 3 | `bash run.sh grid indoor soft CELLS=B400_k1,B400_k4,B400_k16 SEEDS=0,1,2 REPLICATES=1` | B = 400 soft row + 2 extra seeds + 9 subset repeats (18 units) | 5–8 h |
-| 4 | same as 3 with `hard` | B = 400 hard row; with 3, the indoor noise floor | 5–8 h |
+| 3 | `bash run.sh grid indoor soft CELLS=B400_k1,B400_k4,B400_k16 SEEDS=0,1,2 REPLICATES=1` | B = 400 soft row + 2 extra seeds + 9 subset repeats (18 units) | 4.0 h (#868) |
+| 4 | same as 3 with `hard` | B = 400 hard row; with 3, the indoor noise floor | ≈ 4 h |
 | 5 | `bash run.sh grid indoor soft CELLS=B1600_k1,B1600_k4,B1600_k16` | B = 1,600 soft row | 3–4 h |
 | 6 | same as 5 with `hard` | B = 1,600 hard row | 3–4 h |
 | 7 | `bash run.sh grid indoor soft CELLS=B6400_k1,B6400_k4,B6400_k16` | B = 6,400 soft row | 4–6 h |
