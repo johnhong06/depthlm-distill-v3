@@ -10,7 +10,7 @@
 #   MODE=grid  POOL=indoor COND=soft bash run.sh        # ②+③ 을 한 작업에 (권장: 예산 행 하나씩 — 예 CELLS="B400_k1 B400_k4 B400_k16")
 # v3 격자 (paper/design_v3_corrections.md C-2): 셀 = cells_v3.json 의 (B,k) 9개, COND ∈ soft|hard|gthard|gtsoft (†arm 은 λ=0.1 GT 합산)
 # 환경변수: DATA_ROOT(데이터 루트, 기본 ./data), OUT_ROOT(결과, 기본 ./results), FOCAL(750), CELLS(기본 cells_v3.json 전체 — 예산 행 하나만: "B400_k1 B400_k4 B400_k16"),
-#           SEEDS(기본 "0", B=400 행은 "0 1 2" 권장 — 시드>0 은 태그 _s<seed>, greedy 전용 평가), REPLICATES(1 = B400 반복 셀 9개(b0·p0 제외 — 본 셀과 동일)도 학습·greedy 평가 — soft/hard 만),
+#           SEEDS(기본 "0", B=400 행은 "0 1 2" 권장 — 시드>0 은 태그 _s<seed>, greedy 전용 평가), REPLICATES(1 = 요청한 예산 행의 반복 셀 9개(b0·p0 제외 — 본 셀과 동일)도 학습·greedy 평가 — B400·B1600 행에만 있음, soft/hard 만),
 #           SKIP(제외할 단위 태그, 예 "B400_k1" — 옛 격자에서 들여온 본 셀), MODE=baseline(zero-shot 학생 greedy 평가 + 교사 행, 조건 없음),
 #           EVAL_SETS(기본 large, none = 평가 안 함), EVAL_DATASETS(기본 풀별), HF_TOKEN(gated 모델용), NPROC(병렬 학습 프로세스 수)
 set -euo pipefail; cd "$(dirname "$0")"; export PYTHONUNBUFFERED=1
@@ -359,8 +359,9 @@ for c in arms["cells"]:
     if c["tag"] not in want: continue
     for s in os.environ["SEEDS"].split():
         out.append(f"{c['rows']};{c['tag']}{'' if s == '0' else '_s' + s};{s};{'0' if s == '0' else '1'}")
-if os.environ["REPLICATES"] == "1" and os.environ["COND"] in ("soft", "hard"):   # b0·p0 은 본 셀과 학습 행이 같아 돌리지 않는다 (33 이 본 셀로 대신, V-7)
-    out += [f"{r}.parquet;{r};0;1" for r in arms.get("replicates", []) if not r.endswith(("_b0", "_p0"))]
+if os.environ["REPLICATES"] == "1" and os.environ["COND"] in ("soft", "hard"):   # 요청한 셀의 예산 행 반복만 (B400·B1600, V-15). b0·p0 은 본 셀과 학습 행이 같아 돌리지 않는다 (33 이 본 셀로 대신, V-7)
+    bs = {c["tag"].split("_")[0] for c in arms["cells"] if c["tag"] in want}
+    out += [f"{r}.parquet;{r};0;1" for r in arms.get("replicates", []) if r.split("_")[1] in bs and not r.endswith(("_b0", "_p0"))]
 print(" ".join(u for u in out if u.split(";")[1] not in skip))   # SKIP: 이미 있는 단위(예: 옛 격자에서 들여온 본 셀) 제외
 PYU
 )

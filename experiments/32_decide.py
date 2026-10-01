@@ -7,7 +7,8 @@
 판정 (풀의 세트마다 따로 계산한 뒤)
   모든 세트가 같은 방향이고 구간이 모두 0 을 빼면 → 주장 / 같은 방향이고 일부만 → 약한 근거 /
   방향이 갈리고 하나라도 0 을 빼면 → 세트 의존 / 모든 구간이 0 을 포함하면 → 근거 없음.
-  --floor <json> ({세트: 산포}) 를 주면, 배분 '주장'은 추가로 모든 세트에서 |Δ| > 반복 산포일 때만 유지 (아니면 "약한 근거(바닥 이하)").
+  --floor <json> ({예산: {세트: 산포}}, 33 출력) 를 주면, 배분 '주장'은 추가로 모든 세트에서 |Δ| > 반복 산포일 때만 유지 (아니면 "약한 근거(바닥 이하)").
+  예산 B 의 비교에는 B 이하에서 잰 가장 큰 예산의 바닥을 쓴다 — B=400 → B400, B=1600 → B1600, B=6400 → B1600 (V-15).
   혼합 풀은 실내(iBims-1·NYUv2)와 주행(DDAD·nuScenes)에 따로 적용하고, 둘 다 같은 방향으로 주장일 때만 풀 결론.
 민감도 (판정에는 쓰지 않음): DDAD 에서 전면이 아닌 카메라의 아래쪽 1/4 픽셀(차체가 보이는 영역)을 뺀 값.
 사용: DATA_ROOT=… python experiments/32_decide.py --pool indoor --soft_root <OUT_ROOT> --hard_root <OUT_ROOT> [--floor noise_floor.json] [--out decision.md]
@@ -61,20 +62,22 @@ def verdict(res, floors=None):   # res: 세트별 (mean, lo, hi) — 하나라�
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--pool", required=True, choices=list(GROUPS)); ap.add_argument("--soft_root", default=os.environ.get("OUT_ROOT", "results"))
     ap.add_argument("--hard_root", default=None); ap.add_argument("--focal", default="750"); ap.add_argument("--out", default=""); ap.add_argument("--data_root", default=os.environ.get("DATA_ROOT", ""))
-    ap.add_argument("--floor", default="", help="반복 산포 json {세트: 산포} — 배분 '주장'은 |Δ| > 산포일 때만 (V-2)")
+    ap.add_argument("--floor", default="", help="반복 산포 json {예산: {세트: 산포}} — 배분 '주장'은 |Δ| > 산포일 때만 (V-2·V-15)")
     a = ap.parse_args(); roots = {"soft": a.soft_root, "hard": a.hard_root or a.soft_root}; groups = GROUPS[a.pool]; sets = [d for g in groups.values() for d in g]
-    floor = json.load(open(a.floor)) if a.floor else None
+    floor = json.load(open(a.floor)) if a.floor else {}
+    fb = lambda B: max((int(x) for x in floor if int(x) <= B), default=None)   # 예산 B 에 쓸 바닥의 예산 (B 이하에서 잰 가장 큰 예산)
     tag = lambda cell: f"{cell}_{a.pool}_f{a.focal}"; body = ddad_body_pixels(a.data_root) if "ddad" in sets else set()
     D = {(c, cell, ds): load(roots[c], c, tag(cell), ds) for c in roots for cell in CELLS for ds in sets}
     fmt = lambda r: "—" if r is None else f"{r[0]:+.3f} [{r[1]:+.3f}, {r[2]:+.3f}]"
     word = {"alloc": {1: "이미지 많은 쪽", -1: "픽셀 많은 쪽"}, "loss": {1: "soft", -1: "hard"}}
     md = [f"# 판정 — {a.pool} 풀 (사전등록 규칙, NOTES D-22·D-24)", "", "Δδ1 [95 % 군집 부트스트랩 구간]. DDAD·nuScenes 는 장면, 나머지는 사진 단위로 다시 뽑는다.", ""]
     rows, summary = [], []
-    comps = [("alloc", c, f"{c} 예산 {B}: {p} − {q}", c, p, c, q) for c in ("soft", "hard") for B, p, q in ALLOC] + \
-            [("loss", "soft−hard", f"{cell}: soft − hard", "soft", cell, "hard", cell) for cell in CELLS]
-    for kind, cond, name, c1, t1, c2, t2 in comps:
+    comps = [("alloc", c, f"{c} 예산 {B}: {p} − {q}", c, p, c, q, B) for c in ("soft", "hard") for B, p, q in ALLOC] + \
+            [("loss", "soft−hard", f"{cell}: soft − hard", "soft", cell, "hard", cell, None) for cell in CELLS]
+    for kind, cond, name, c1, t1, c2, t2, B in comps:
         res = {ds: paired(D[(c1, t1, ds)], D[(c2, t2, ds)], ds) for ds in sets}
-        fl = (lambda ds_list: [floor.get(d, 0.0) for d in ds_list]) if (floor and kind == "alloc") else (lambda ds_list: None)
+        Bf = fb(B) if kind == "alloc" else None
+        fl = (lambda ds_list: [floor[str(Bf)].get(d, 0.0) for d in ds_list]) if Bf else (lambda ds_list: None)
         gv = {g: verdict([res[d] for d in ds], fl(ds)) for g, ds in groups.items()}
         vals = list(gv.values())
         if len(groups) > 1:   # 혼합 풀: 두 도메인 모두 같은 방향으로 주장일 때만 풀 결론
@@ -83,7 +86,8 @@ def main():
             elif len({(v[0], v[1]) for v in vals}) == 1: pool_v = vals[0]
             else: pool_v = ("도메인별로 다름", 0)
         else: pool_v = vals[0]
-        row = {"종류": "배분" if kind == "alloc" else "손실", "비교": name, **{NAMES[d]: fmt(res[d]) for d in sets}}
+        row = {"종류": "배분" if kind == "alloc" else "손실", "비교": name, **{NAMES[d]: fmt(res[d]) for d in sets},
+               "적용 바닥": f"B{Bf}: " + " / ".join(f"{floor[str(Bf)].get(d, 0.0):.4f}" for d in sets) if Bf else "—"}
         if "ddad" in sets and body: row["DDAD (차체 영역 제외)"] = fmt(paired(D[(c1, t1, "ddad")], D[(c2, t2, "ddad")], "ddad", drop=body))
         row.update({f"판정 ({g})": (v[0] + (f": {word[kind][v[1]]}" if v[1] else "")) for g, v in gv.items()})
         if len(groups) > 1: row["풀 판정"] = pool_v[0] + (f": {word[kind][pool_v[1]]}" if pool_v[1] else "")

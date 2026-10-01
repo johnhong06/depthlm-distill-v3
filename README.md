@@ -16,7 +16,7 @@ unchanged, prior results are not. Design rationale: [paper/design_v3_corrections
 | Labels | DepthLM 12B answers on the pool pixels; the v3 grid and its replicate cells are fully covered by the existing 44,800 labels per pool — **zero new teacher queries** (verified by `experiments/03_build_cells_v3.py`) |
 | Student input/output | **the teacher's own official DepthLM format**: the official question, then the template `<think> The point is around ` is filled in and the student answers the number (first decimal) followed by ` meters`. The teacher labels and its digit distributions were read in exactly this position, so the student learns the same conditional; image positions use Qwen2.5-VL's 3-D M-RoPE in training and evaluation alike |
 | Ground truth | never used by the pure arms (`soft`, `hard`); the † arms `gt+soft` / `gt+hard` add λ = 0.1 · CE(GT) and are reported beside them but excluded from the equal-budget ranking |
-| Noise floor | the B = 400 arms are re-run over training subsets (image blocks / pixel indices, free relabelings) and over seeds 0/1/2; equal-budget claims must exceed the larger spread |
+| Noise floor | the B = 400 and B = 1,600 arms are re-run over training subsets (image blocks / pixel indices, inside the existing labels); B = 400 also over seeds 0/1/2. A claim at budget B must exceed that row's largest spread, and B = 6,400 uses the B = 1,600 floor |
 | Evaluation | δ1 (max(pred/gt, gt/pred) < 1.25, identical to the official DepthLM metric) on iBims-1, NYUv2 (indoor), DDAD, nuScenes (driving), ETH3D fully held out; each pool on its own domain only |
 
 Why this design: DepthLM's Finding 4 ("1 labeled pixel per training image … image diversity is more important than
@@ -62,7 +62,7 @@ experiments/08_align_pool_coords.py sets pool pixel coordinates to the coordinat
 experiments/20_train_student.py    LoRA training: soft / hard / gtsoft / gthard (+ gt, wsoft), --seed, --decimals {1,2}
 experiments/21_eval_student.py     per-cell evaluation (full, or --greedy_only for seeds and replicates)
 experiments/31_grid.py, 32_decide.py   per-pool tables and the pre-registered decision rule (--floor = noise floor)
-experiments/33_noise_floor.py      B = 400 spread over subsets and seeds → noise_floor_<pool>.json
+experiments/33_noise_floor.py      per-budget spread (B = 400 subsets + seeds, B = 1,600 subsets) → noise_floor_<pool>.json
 experiments/34_baselines.py        teacher row (from recorded teacher outputs in ref/) + zero-shot row
 experiments/35_answer_diag.py      per run: answer spread, "2.3" share, Spearman ρ, global scale error (descriptive, not the rule)
 pools/<pool>/                      pool.jsonl (v5 order), teacher_labels.parquet (+ gt), rows_B*_k*.parquet, rep_*.parquet, cells_v3.json, gt_coverage.md
@@ -80,14 +80,16 @@ grid**; the six v2 indoor soft cells are kept only as a comparison table below. 
 under [Order of work](#order-of-work).
 
 2026-10-01: indoor soft B = 400 row done (#868) with its seeds and subset repeats. The equal-budget differences sit
-below the noise floor, so there is no claim yet. Indoor hard B = 400 is running.
+below the noise floor, so there is no claim yet. Indoor hard B = 400 is running. The B = 1,600 rows now also get
+subset repeats, so that row is judged against its own noise floor. This was decided before any v3 B ≥ 1,600 result
+existed (NOTES V-15).
 
 ## Results
 
 Every cell is `δ1 / AbsRel` on the pool's own evaluation sets, filled in from each cell's evaluation file as it
 finishes; a dash means not evaluated yet. Numbers come only from evaluation files — this repository's H200 runs
 and the teacher's recorded outputs in `ref/` (pre-registration: the decision rule of `32_decide.py` is applied per
-budget row; equal-budget claims must also exceed the B = 400 noise floor below). **`soft` and `hard` are both pseudo-label losses (`Loss_pseudo`)** — hard is CE on the
+budget row; equal-budget claims must also exceed the noise floor below: B = 400 and B = 1,600 each use their own floor, and B = 6,400 uses the B = 1,600 floor). **`soft` and `hard` are both pseudo-label losses (`Loss_pseudo`)** — hard is CE on the
 teacher's answer, soft is KL to the teacher's digit distribution; neither uses ground truth.
 **The † rows are `Loss_gt + Loss_pseudo`**, trained alongside the pure arms in the same cells, and the pseudo term
 keeps its two forms: `gt+hard` = (1−λ)·CE(teacher answer) + λ·CE(GT), `gt+soft` = (1−λ)·KL(teacher distribution)
@@ -150,7 +152,7 @@ dropped from the grid for now (re-added later by the fixed rule if needed).
 
 **Indoor verdicts so far** (`32_decide.py --floor`, `tables/decision_indoor.md`). B = 400 soft: k1 − k4 shows no
 evidence. k1 − k16 and k4 − k16 favour more pixels per image with CIs that exclude 0 on both sets (Δδ1 −0.041 / −0.093
-and −0.050 / −0.079), but every |Δ| is below the noise floor (0.093 / 0.176). The pre-registered verdict is therefore
+and −0.050 / −0.079), but every |Δ| is below the B = 400 noise floor (0.0933 / 0.1755). The pre-registered verdict is therefore
 **weak evidence (below the floor), not a claim**. The main k = 16 cell is the best of its four 25-image draws on both
 sets; the other three score 0.272–0.318 / 0.291–0.368. Averaged over the four draws, the arms are level: k1 0.304 / 0.344,
 k4 0.321 / 0.368, k16 0.318 / 0.369. A descriptive diagnostic (`35_answer_diag.py`, not part of the rule) shows why. At
@@ -244,28 +246,46 @@ student's scale.
 | | | | teacher | 0.809 / 0.143 | 0.881 / 0.125 | 0.653 / 0.240 | 0.728 / 0.601 |
 | | | | student zero-shot | 0.054 / 0.592 | 0.060 / 0.566 | 0.114 / 2.662 | 0.112 / 5.428 |
 
-### Noise floor — B = 400 (δ1 spread per set, `33_noise_floor.py`)
+### Noise floor — B = 400 and B = 1,600 (δ1 spread per set, `33_noise_floor.py`)
 
-Two kinds of repeat, both inside the existing labels. **Subset**: the training subset is re-drawn (image blocks
-b0–b3 for N = 25 / N = 100, pixel indices p0–p3 for N = 400; b0/p0 are the main cells themselves, so they are not
-re-run). **Seed**: the main cell is re-run with seeds 1 and 2, which change initialization, dropout and data order.
-The spread is max − min of δ1 within an arm, and the floor per set is the largest spread. An equal-budget difference
-must exceed it before it counts as a claim (`32_decide.py --floor`).
+Two kinds of repeat, both inside the existing labels, so they need no new teacher queries:
 
-| Pool | Arm | Subset spread (4 draws) | Seed spread (3 seeds) | Loss |
-|:--|:--|:--|:--|:--|
-| indoor | N=25 k=16 | soft 0.093 / 0.176 · hard — | soft 0.011 / 0.015 · hard — | soft / hard |
-| indoor | N=100 k=4 | soft 0.075 / 0.093 · hard — | soft 0.045 / 0.076 · hard — | soft / hard |
-| indoor | N=400 k=1 | soft 0.058 / 0.069 · hard — | soft 0.029 / 0.030 · hard — | soft / hard |
-| driving | N=25 k=16 | — | — | soft / hard |
-| driving | N=100 k=4 | — | — | soft / hard |
-| driving | N=400 k=1 | — | — | soft / hard |
-| mixed | N=25 k=16 | — | — | soft / hard |
-| mixed | N=100 k=4 | — | — | soft / hard |
-| mixed | N=400 k=1 | — | — | soft / hard |
+- **Subset**: the training subset is re-drawn. The k = 16 and k = 4 arms take image blocks b0–b3, and the k = 1 arm
+  takes pixel indices p0–p3 on the same images. b0/p0 are the main cells themselves, so they are not re-run.
+- **Seed** (B = 400 only): the main cell is re-run with seeds 1 and 2, which change initialization, dropout and data
+  order.
 
-Values are iBims-1 / NYUv2 (driving: DDAD / nuScenes). Indoor floor with soft only: **0.093 / 0.176**, set by the
-N = 25 subset draws (`tables/noise_floor_indoor.md`). The final floor is the maximum over soft and hard.
+The spread is max − min of δ1 within an arm. A budget row's floor per set is the largest spread in that row, and an
+equal-budget difference must exceed it before it counts as a claim (`32_decide.py --floor`).
+
+B = 400 measures noise on 25–400 images per arm. Its floor would be too strict for larger budgets, so B = 1,600 gets
+its own subset repeats. B = 6,400 is judged against the B = 1,600 floor, which is a conservative bound because those
+arms use more images. Each B = 6,400 repeat would cost 12,800 steps. Seeds are skipped at B = 1,600 because at B = 400
+the seed spread was below the subset spread in every arm and set (NOTES V-15).
+
+| Pool | Budget | Arm | Subset spread (4 draws) | Seed spread (3 seeds) |
+|:--|--:|:--|:--|:--|
+| indoor | 400 | N=25 k=16 | soft 0.093 / 0.176 · hard — | soft 0.011 / 0.015 · hard — |
+| indoor | 400 | N=100 k=4 | soft 0.075 / 0.093 · hard — | soft 0.045 / 0.076 · hard — |
+| indoor | 400 | N=400 k=1 | soft 0.058 / 0.069 · hard — | soft 0.029 / 0.030 · hard — |
+| indoor | 1,600 | N=100 k=16 | — | not run |
+| indoor | 1,600 | N=400 k=4 | — | not run |
+| indoor | 1,600 | N=1600 k=1 | — | not run |
+| driving | 400 | N=25 k=16 | — | — |
+| driving | 400 | N=100 k=4 | — | — |
+| driving | 400 | N=400 k=1 | — | — |
+| driving | 1,600 | N=100 k=16 | — | not run |
+| driving | 1,600 | N=400 k=4 | — | not run |
+| driving | 1,600 | N=1600 k=1 | — | not run |
+| mixed | 400 | N=25 k=16 | — | — |
+| mixed | 400 | N=100 k=4 | — | — |
+| mixed | 400 | N=400 k=1 | — | — |
+| mixed | 1,600 | N=100 k=16 | — | not run |
+| mixed | 1,600 | N=400 k=4 | — | not run |
+| mixed | 1,600 | N=1600 k=1 | — | not run |
+
+Values are iBims-1 / NYUv2 (driving: DDAD / nuScenes). The indoor B = 400 floor with soft only is **0.0933 / 0.1755**,
+set by the N = 25 subset draws (`tables/noise_floor_indoor.md`). Each floor is final once both soft and hard are in.
 
 ### Side experiments (each gated, reported separately from the main grid)
 
@@ -322,8 +342,8 @@ step on indoor because 84 % of the rows carry a second, GT forward pass):
 | 2 | `bash run.sh baseline mixed` | zero-shot row of all three tables (four sets, greedy) | 1 h |
 | 3 | `bash run.sh grid indoor soft CELLS=B400_k1,B400_k4,B400_k16 SEEDS=0,1,2 REPLICATES=1` | B = 400 soft row + 2 extra seeds + 9 subset repeats (18 units) | 4.0 h (#868) |
 | 4 | same as 3 with `hard` | B = 400 hard row; with 3, the indoor noise floor | ≈ 4 h |
-| 5 | `bash run.sh grid indoor soft CELLS=B1600_k1,B1600_k4,B1600_k16` | B = 1,600 soft row | 3–4 h |
-| 6 | same as 5 with `hard` | B = 1,600 hard row | 3–4 h |
+| 5 | `bash run.sh grid indoor soft CELLS=B1600_k1,B1600_k4,B1600_k16 REPLICATES=1` | B = 1,600 soft row + 9 subset repeats (12 units) | ≈ 5–5.5 h |
+| 6 | same as 5 with `hard` | B = 1,600 hard row + repeats; with 5, the B = 1,600 floor | ≈ 5–5.5 h |
 | 7 | `bash run.sh grid indoor soft CELLS=B6400_k1,B6400_k4,B6400_k16` | B = 6,400 soft row | 4–6 h |
 | 8 | same as 7 with `hard` | B = 6,400 hard row | 4–6 h |
 | 9–10 | `bash run.sh grid indoor gtsoft CELLS=B400_k1,B400_k4,B400_k16`, then `gthard` | † rows, B = 400 | 3–4 h |
