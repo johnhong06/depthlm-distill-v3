@@ -112,15 +112,15 @@ dropped from the grid for now (re-added later by the fixed rule if needed).
 | Budget | N | k | Loss | iBims-1 | NYUv2 |
 |---:|---:|---:|:--|:--|:--|
 | **400** | 400 | 1 | soft | 0.324 / 0.340 | 0.373 / 0.297 |
-| | | | hard | — | — |
+| | | | hard | 0.328 / 0.340 | 0.376 / 0.296 |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
 | | 100 | 4 | soft | 0.315 / 0.341 | 0.388 / 0.283 |
-| | | | hard | — | — |
+| | | | hard | 0.295 / 0.359 | 0.349 / 0.301 |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
 | | 25 | 16 | soft | 0.365 / 0.322 | 0.467 / 0.265 |
-| | | | hard | — | — |
+| | | | hard | 0.369 / 0.329 | 0.473 / 0.273 |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
 | **1,600** | 1600 | 1 | soft | — | — |
@@ -341,7 +341,7 @@ step on indoor because 84 % of the rows carry a second, GT forward pass):
 | 1 | `bash run.sh smoke` | checks the new checkout on H200 | 0.5 h |
 | 2 | `bash run.sh baseline mixed` | zero-shot row of all three tables (four sets, greedy) | 1 h |
 | 3 | `bash run.sh grid indoor soft CELLS=B400_k1,B400_k4,B400_k16 SEEDS=0,1,2 REPLICATES=1` | B = 400 soft row + 2 extra seeds + 9 subset repeats (18 units) | 4.0 h (#868) |
-| 4 | same as 3 with `hard` | B = 400 hard row; with 3, the indoor noise floor | ≈ 4 h |
+| 4 | same as 3 with `hard` | B = 400 hard row; with 3, the indoor noise floor | 4.0 h (#869) |
 | 5 | `bash run.sh grid indoor soft CELLS=B1600_k1,B1600_k4,B1600_k16 REPLICATES=1` | B = 1,600 soft row + 9 subset repeats (12 units) | ≈ 5–5.5 h |
 | 6 | same as 5 with `hard` | B = 1,600 hard row + repeats; with 5, the B = 1,600 floor | ≈ 5–5.5 h |
 | 7 | `bash run.sh grid indoor soft CELLS=B6400_k1,B6400_k4,B6400_k16` | B = 6,400 soft row | 4–6 h |
