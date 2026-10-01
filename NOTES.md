@@ -21,6 +21,17 @@
 - [ ] H200 제출 — README "Order of work" 표 1–14 (indoor) → outdoor → mixed (10-01: 3번 완료 #868, 4번 실행 중)
 - [x] indoor soft B=400 잡음 바닥·판정 (#868 zip) + `35_answer_diag.py` 답 분포·스케일 진단 — 2026-10-01 (V-14)
 - [x] (사용자 결정, B=1600 결과 전) B ≥ 1,600 잡음 바닥 → 예산별 바닥: B=1600 부분집합 반복 추가, B=6400 은 B=1600 바닥 — 2026-10-01 (V-15)
+- **⏸ 일시 중지 (2026-10-01 17시, 사용자)** — indoor B=400 행 soft(#868)·hard(#869) 완료 후 멈춤. 재개 순서:
+  - [ ] ① hard zip `results_hard_indoor.zip` (#869, 491 MB) 받기 → `results/` 에 풀고 CRC 확인
+    → `33_noise_floor.py --pool indoor` (soft+hard) 로 B=400 바닥 확정 → `32_decide.py --floor` → `35_answer_diag.py --cond hard`.
+  - [ ] ② (사용자 결정) 손실 비교 관문 V-16:
+    - 권장: B=1600 에 시드 0·1·2 를 다시 넣는다 — 5a 본 셀+시드 / 5b 반복으로 나눠 각 약 4 h.
+    - 대안: B=400 시드 산포를 모든 예산에 적용한다.
+    - 결정 뒤에 33 (시드 바닥을 따로 출력) 과 32 (손실 비교에 관문) 를 고친다. H200 에서 도는 코드는 바꿀 필요 없음.
+  - [ ] ③ 5번 제출. 명령은 ② 결정에 따른다:
+    - 권장안: `SEEDS=0,1,2` 작업 하나 + `REPLICATES=1 SKIP=B1600_k1,B1600_k4,B1600_k16` 작업 하나.
+    - 대안: `REPLICATES=1` 작업 하나.
+  - (선택, 미답) `~/Downloads` 의 nuScenes tgz 2개(4.6 GB, `~/data` 에 다 풀려 있음) 삭제 여부. PPT 그림(matplotlib/SVG) 제작 여부.
 - [ ] W1 파일럿: 값 공간(log-depth) 수식·대상 셀 확정 → 한 셀 실행
 - [ ] hard 1자리 vs 2자리 ablation: 부분집합 2자리 재라벨(teacher_full) → `--decimals 2` 비교
 - [ ] 레시피-혼합: per-row 조건 학습 코드 (게이트: 도메인 격자 주장 ≥1건)

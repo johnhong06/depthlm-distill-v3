@@ -84,6 +84,11 @@ below the noise floor, so there is no claim yet. Indoor hard B = 400 is running.
 subset repeats, so that row is judged against its own noise floor. This was decided before any v3 B ≥ 1,600 result
 existed (NOTES V-15).
 
+2026-10-01, later: indoor hard B = 400 is done (#869), with the same picture as soft (no allocation claim). **The
+project is paused.** It resumes with three steps (NOTES checklist): the hard zip, which fixes the B = 400 floor; a
+training-noise gate for soft − hard comparisons, because an A/A check flagged 4 of 9 same-condition seed pairs as
+claims (NOTES V-16); then the B = 1,600 jobs.
+
 ## Results
 
 Every cell is `δ1 / AbsRel` on the pool's own evaluation sets, filled in from each cell's evaluation file as it
