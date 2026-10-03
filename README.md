@@ -89,6 +89,10 @@ project is paused.** It resumes with three steps (NOTES checklist): the hard zip
 training-noise gate for soft − hard comparisons, because an A/A check flagged 4 of 9 same-condition seed pairs as
 claims (NOTES V-16); then the B = 1,600 jobs.
 
+2026-10-03: indoor soft B = 1,600 is done (#879, one job: seeds 0·1·2 + 9 subset repeats, 7 h 31 m). The main
+cells now favour **more images** (k1 − k16 +0.089 / +0.046, k4 − k16 +0.082 / +0.029, CIs exclude 0), the opposite
+direction to B = 400. No verdict yet: the B = 1,600 noise floor comes from the subset repeats in the zip.
+
 ## Results
 
 Every cell is `δ1 / AbsRel` on the pool's own evaluation sets, filled in from each cell's evaluation file as it
@@ -128,15 +132,15 @@ dropped from the grid for now (re-added later by the fixed rule if needed).
 | | | | hard | 0.369 / 0.329 | 0.473 / 0.273 |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
-| **1,600** | 1600 | 1 | soft | — | — |
+| **1,600** | 1600 | 1 | soft | 0.393 / 0.283 | 0.525 / 0.219 |
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
-| | 400 | 4 | soft | — | — |
+| | 400 | 4 | soft | 0.386 / 0.288 | 0.507 / 0.226 |
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
-| | 100 | 16 | soft | — | — |
+| | 100 | 16 | soft | 0.304 / 0.322 | 0.478 / 0.232 |
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
@@ -347,8 +351,8 @@ step on indoor because 84 % of the rows carry a second, GT forward pass):
 | 2 | `bash run.sh baseline mixed` | zero-shot row of all three tables (four sets, greedy) | 1 h |
 | 3 | `bash run.sh grid indoor soft CELLS=B400_k1,B400_k4,B400_k16 SEEDS=0,1,2 REPLICATES=1` | B = 400 soft row + 2 extra seeds + 9 subset repeats (18 units) | 4.0 h (#868) |
 | 4 | same as 3 with `hard` | B = 400 hard row; with 3, the indoor noise floor | 4.0 h (#869) |
-| 5 | `bash run.sh grid indoor soft CELLS=B1600_k1,B1600_k4,B1600_k16 REPLICATES=1` | B = 1,600 soft row + 9 subset repeats (12 units) | ≈ 5–5.5 h |
-| 6 | same as 5 with `hard` | B = 1,600 hard row + repeats; with 5, the B = 1,600 floor | ≈ 5–5.5 h |
+| 5 | `bash run.sh grid indoor soft CELLS=B1600_k1,B1600_k4,B1600_k16 SEEDS=0,1,2 REPLICATES=1` | B = 1,600 soft row + 2 extra seeds + 9 subset repeats (18 units; seeds feed the soft − hard gate, NOTES V-16) | ≈ 7.5–8 h |
+| 6 | same as 5 with `hard` | B = 1,600 hard row + seeds + repeats; with 5, the B = 1,600 floors | ≈ 7.5–8 h |
 | 7 | `bash run.sh grid indoor soft CELLS=B6400_k1,B6400_k4,B6400_k16` | B = 6,400 soft row | 4–6 h |
 | 8 | same as 7 with `hard` | B = 6,400 hard row | 4–6 h |
 | 9–10 | `bash run.sh grid indoor gtsoft CELLS=B400_k1,B400_k4,B400_k16`, then `gthard` | † rows, B = 400 | 3–4 h |
