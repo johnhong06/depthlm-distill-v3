@@ -118,25 +118,27 @@ dropped from the grid for now (re-added later by the fixed rule if needed).
 
 ### Indoor pool — evaluated on iBims-1, NYUv2
 
+Within each budget, **bold** = best and <ins>underline</ins> = second-best allocation (k) by δ1, ranked separately per loss and set (descriptive only — verdicts come from `32_decide.py --floor`; † rows and baselines are not ranked).
+
 | Budget | N | k | Loss | iBims-1 | NYUv2 |
 |---:|---:|---:|:--|:--|:--|
-| **400** | 400 | 1 | soft | 0.324 / 0.340 | 0.373 / 0.297 |
-| | | | hard | 0.328 / 0.340 | 0.376 / 0.296 |
+| **400** | 400 | 1 | soft | <ins>0.324 / 0.340</ins> | 0.373 / 0.297 |
+| | | | hard | <ins>0.328 / 0.340</ins> | <ins>0.376 / 0.296</ins> |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
-| | 100 | 4 | soft | 0.315 / 0.341 | 0.388 / 0.283 |
+| | 100 | 4 | soft | 0.315 / 0.341 | <ins>0.388 / 0.283</ins> |
 | | | | hard | 0.295 / 0.359 | 0.349 / 0.301 |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
-| | 25 | 16 | soft | 0.365 / 0.322 | 0.467 / 0.265 |
-| | | | hard | 0.369 / 0.329 | 0.473 / 0.273 |
+| | 25 | 16 | soft | **0.365 / 0.322** | **0.467 / 0.265** |
+| | | | hard | **0.369 / 0.329** | **0.473 / 0.273** |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
-| **1,600** | 1600 | 1 | soft | 0.393 / 0.283 | 0.525 / 0.219 |
+| **1,600** | 1600 | 1 | soft | **0.393 / 0.283** | **0.525 / 0.219** |
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
-| | 400 | 4 | soft | 0.386 / 0.288 | 0.507 / 0.226 |
+| | 400 | 4 | soft | <ins>0.386 / 0.288</ins> | <ins>0.507 / 0.226</ins> |
 | | | | hard | — | — |
 | | | | gt+soft † | — | — |
 | | | | gt+hard † | — | — |
